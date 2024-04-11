@@ -236,7 +236,7 @@ async fn main() {
     let default_keypair4 = args.keypair4.unwrap_or("".to_string());
     let default_keypair5 = args.keypair5.unwrap_or("".to_string());
 
-    let rpc_client = RpcClient::new_with_commitment(cluster, CommitmentConfig::finalized());
+    let rpc_client = RpcClient::new_with_commitment(cluster, CommitmentConfig::confirmed());
 
     let miner = Arc::new(Miner::new(
         Arc::new(rpc_client),

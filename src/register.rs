@@ -1,27 +1,20 @@
 use std::str::FromStr;
-use solana_sdk::signature::Signer;
-use solana_sdk::pubkey::Pubkey;
+use solana_sdk::{
+    signature::Signer,
+    signer::keypair::Keypair
+};
 use crate::{utils::proof_pubkey, Miner};
 
 impl Miner {
-    pub async fn register(&self, address: Option<String>) {
+    pub async fn register_by_number(&self, keypair_number: u64) {
+        self.register(&self.signer_by_number(keypair_number)).await
+    }
+
+    pub async fn register(&self, signer: &Keypair) {
         // Return early if miner is already registered
-        let signer = self.signer();
         let client = self.rpc_client.clone();
-
-        let pubkey = if let Some(address) = address {
-            if let Ok(address) = Pubkey::from_str(&address) {
-                address
-            } else {
-                println!("Invalid address: {:?}", address);
-                signer.pubkey()
-            }
-        } else {
-            signer.pubkey()
-        };
-        
+        let pubkey = signer.pubkey();
         let proof_address = proof_pubkey(pubkey);
-
         if client.get_account(&proof_address).await.is_ok() {
             println!("Registration OK...");    
             return;

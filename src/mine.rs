@@ -46,7 +46,7 @@ impl Miner {
         let signer = self.signer();
         
         for wallet in 1..WALLETS+1 {
-            self.register(Some(self.signer_by_number(wallet).pubkey().to_string())).await;    
+            self.register_by_number(wallet).await;    
         }        
 
         let mut stdout = stdout();
@@ -64,7 +64,7 @@ impl Miner {
             let reward_rate = (treasury.reward_rate as f64) / (10f64.powf(ore::TOKEN_DECIMALS as f64));
             let priority_fee = (reward_rate * 10000000000.0) as u64;
 
-            stdout.write_all(b"\x1b[2J\x1b[3J\x1b[H").ok();
+            //stdout.write_all(b"\x1b[2J\x1b[3J\x1b[H").ok();
             
             for wallet in 1..WALLETS+1 {
                 let balance = self.get_ore_display_balance(wallet).await;
@@ -535,7 +535,7 @@ impl Miner {
                     "0.00".to_string()
                 }
             }
-            Err(_) => "Err".to_string(),
+            Err(_) => "0.00".to_string(),
         }
     }
 }

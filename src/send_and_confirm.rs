@@ -82,11 +82,11 @@ impl NonceManager {
 use crate::Miner;
 
 const RPC_RETRIES: usize = 0;
-const GATEWAY_RETRIES: usize = 150;
+const GATEWAY_RETRIES: usize = 75;
 const CONFIRM_RETRIES: usize = 1;
 
 const CONFIRM_DELAY: u64 = 0;
-const GATEWAY_DELAY: u64 = 300;
+const GATEWAY_DELAY: u64 = 600;
 
 impl Miner {
     pub async fn send_and_confirm(

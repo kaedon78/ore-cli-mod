@@ -1,27 +1,16 @@
-use std::str::FromStr;
-use solana_program::pubkey::Pubkey;
-use solana_sdk::signature::Signer;
-
+use solana_sdk::{
+    signature::Signer,
+    signer::keypair::Keypair
+};
 use crate::Miner;
 
 impl Miner {
     pub async fn balance_by_number(&self, keypair_number: u64) {
-        let signer = self.signer_by_number(keypair_number);    
-        self.balance(Some(signer.pubkey().to_string())).await
+        self.balance(&self.signer_by_number(keypair_number)).await
     }
 
-    pub async fn balance(&self, address: Option<String>) {
-        let signer = self.signer();
-        let address = if let Some(address) = address {
-            if let Ok(address) = Pubkey::from_str(&address) {
-                address
-            } else {
-                println!("Invalid address: {:?}", address);
-                return;
-            }
-        } else {
-            signer.pubkey()
-        };
+    pub async fn balance(&self, signer: &Keypair) {
+        let address = signer.pubkey();
         let client = self.rpc_client.clone();
         let token_account_address = spl_associated_token_account::get_associated_token_address(
             &address,

@@ -4,8 +4,8 @@ use solana_program::pubkey::Pubkey;
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     signature::Signer,
+    signer::keypair::Keypair
 };
- use solana_sdk::signer::keypair::Keypair;
 use crate::{cu_limits::CU_LIMIT_CLAIM, utils::proof_pubkey, utils::get_proof, Miner};
 
 impl Miner {

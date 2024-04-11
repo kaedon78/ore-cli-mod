@@ -229,6 +229,7 @@ async fn main() {
 
     // Initialize miner.
     let cluster = args.rpc.unwrap_or(cli_config.json_rpc_url);
+    println!("URL {}", cluster);
     let default_keypair1 = args.keypair1.unwrap_or(cli_config.keypair_path.clone());
     let default_keypair2 = args.keypair2.unwrap_or("".to_string());
     let default_keypair3 = args.keypair3.unwrap_or("".to_string());

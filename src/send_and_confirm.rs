@@ -83,7 +83,7 @@ use crate::Miner;
 
 const RPC_RETRIES: usize = 0;
 const GATEWAY_RETRIES: usize = 2;
-const CONFIRM_RETRIES: usize = 4;
+const CONFIRM_RETRIES: usize = 3;
 
 const CONFIRM_DELAY: u64 = 2000;
 const GATEWAY_DELAY: u64 = 2000;
@@ -169,7 +169,7 @@ impl Miner {
                                                 TransactionConfirmationStatus::Processed => {}
                                                 TransactionConfirmationStatus::Confirmed
                                                 | TransactionConfirmationStatus::Finalized => {
-                                                    println!("Transaction landed!");
+                                                    println!("{} Success: Transaction landed!", chrono::offset::Local::now());
                                                     return Ok(sig);
                                                 }
                                             }

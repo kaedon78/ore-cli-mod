@@ -123,11 +123,11 @@ impl Miner {
 
             // Submit mine tx.
             // Use busses randomly so on each epoch, transactions don't pile on the same busses
-            println!("\n\nSubmitting hash for validation...");
+            //println!("\n\nSubmitting hash for validation...");
             'submit: loop {
                 // Double check we're submitting for the right challenge
                 for wallet in 1..WALLETS+1 {
-                    println!("\n\nChecking hash already validated for wallet {}...", wallet);
+                    //println!("\nChecking hash already validated for wallet {}...", wallet);
                     let proof_ = get_proof(&self.rpc_client, self.signer_by_number(wallet).pubkey()).await;
                     if !self.validate_hash(
                         *next_hashes.get(&wallet).unwrap(),
@@ -136,7 +136,7 @@ impl Miner {
                         *nonces.get(&wallet).unwrap(),
                         treasury.difficulty.into(),
                     ) {
-                        println!("{} Success: Hash already validated! An earlier transaction must have landed.", chrono::offset::Local::now());
+                        println!("{} Success: Hash already validated for wallet {}! An earlier transaction must have landed.", wallet, chrono::offset::Local::now());
                         break 'submit;
                     }
                 }
@@ -171,7 +171,7 @@ impl Miner {
                 let mut mine_ixs: Vec<Instruction> = Vec::new();
                 mine_ixs.push(cu_limit_ix);
                 mine_ixs.push(cu_price_ix);
-                for wallet in 1..WALLETS {
+                for wallet in 1..WALLETS+1 {
                     let ix_mine = ore::instruction::mine(
                         self.signer_by_number(wallet).pubkey(),
                         BUS_ADDRESSES[bus.id as usize],

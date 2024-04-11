@@ -270,9 +270,7 @@ async fn main() {
             miner.mine(args.threads).await;
         }
         Commands::Claim(args) => {
-            for wallet in 1..WALLETS+1 {
-                miner.claim_by_number(wallet, args.beneficiary.clone(), args.amount).await;
-            }
+            miner.claim(args.beneficiary.clone(), args.amount).await;
         }
         #[cfg(feature = "admin")]
         Commands::Initialize(_) => {

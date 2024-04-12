@@ -64,7 +64,7 @@ impl Miner {
             // Fetch account state
             let treasury = get_treasury(&self.rpc_client).await;
             let reward_rate = (treasury.reward_rate as f64) / (10f64.powf(ore::TOKEN_DECIMALS as f64));
-            let priority_fee = (reward_rate * 10000000000.0) as u64;
+            let priority_fee = self.priority_fee;
 
             stdout.write_all(b"\x1b[2J\x1b[3J\x1b[H").ok();
             
@@ -72,15 +72,13 @@ impl Miner {
                 println!("Last reward took {} seconds to land\n", last_submit_time/1000);
             }
             
-            for wallet in 1..WALLETS+1 {
-                let balance = self.get_ore_display_balance(wallet).await;
-                println!("Wallet {} balance: {} ORE", wallet, balance);
-            }
+            println!("Main wallet balance: {} ORE", self.get_ore_display_balance(1).await);
 
             println!("Current reward rate: {} ORE", reward_rate);
             println!("Using priority fee: {} micro-lamports", priority_fee);
             println!("Avg reward rate: {} ORE", reward_rate_sum as f64 / reward_rate_count as f64);
             if total_times_mined > 0 {
+                println!("Total times mined: {}", total_times_mined);
                 println!("Avg time per mine: {} seconds", (total_submit_mills+total_mining_mills) / total_times_mined / 1000);
             }
            
@@ -94,7 +92,7 @@ impl Miner {
             //if reward less than average, retry a few times
             if reward_rate < (reward_rate_sum as f64 / reward_rate_count as f64) * 0.875 {
                 println!("Current reward rate less than average, waiting a few more seconds...");
-                if reward_rate_retries < 5 {
+                if reward_rate_retries < 3 {
                     reward_rate_retries += 1;
                     std::thread::sleep(Duration::from_millis(3000));
                     continue;
@@ -168,7 +166,7 @@ impl Miner {
                         let cu_limit_ix =
                             ComputeBudgetInstruction::set_compute_unit_limit(CU_LIMIT_RESET);
                         let cu_price_ix =
-                            ComputeBudgetInstruction::set_compute_unit_price(self.priority_fee);
+                            ComputeBudgetInstruction::set_compute_unit_price(priority_fee);
                         let reset_ix = ore::instruction::reset(signer.pubkey());
                         self.send_and_confirm(&[cu_limit_ix, cu_price_ix, reset_ix], false, true, vec![&signer])
                             .await

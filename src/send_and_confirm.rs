@@ -161,8 +161,8 @@ impl Miner {
                     if skip_confirm {
                         return Ok(sig);
                     }
+                    std::thread::sleep(Duration::from_millis(300));
                     for _ in 0..CONFIRM_RETRIES {
-                        std::thread::sleep(Duration::from_millis(CONFIRM_DELAY));
                         match client.get_signature_statuses(&[sig]).await {
                             Ok(signature_statuses) => {
                                 //println!("Confirms: {:?}", signature_statuses.value);
@@ -187,19 +187,20 @@ impl Miner {
                                     }
                                 }
                             }
-
                             // Handle confirmation errors
                             Err(err) => {
-                                println!("Error: {:?}", err);
+                                println!("\nError: {:?}", err);
                             }
                         }
+                        stdout.flush().ok();
+                        std::thread::sleep(Duration::from_millis(CONFIRM_DELAY));
                     }
                     //println!("Transaction did not land");
                 }
 
                 // Handle submit errors
                 Err(err) => {
-                    println!("Error {:?}", err);
+                    println!("\nError {:?}", err);
                 }
             }
             stdout.flush().ok();

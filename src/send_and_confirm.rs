@@ -147,14 +147,15 @@ impl Miner {
         // add all the signers
         tx.sign(&signers, hash);
 
-        let mut sigs = vec![];
+        //let mut sigs = vec![];
+        let miningchars = ["\u{1FAA8}","\u{26CF} ","\u{1F48E}"];
         let mut attempts = 0;
         loop {
-            println!("Attempt: {:?}", attempts);
+
             match client.send_transaction_with_config(&tx, send_cfg).await {
                 Ok(sig) => {
-                    sigs.push(sig);
-                    println!("{:?}", sig);
+                    //sigs.push(sig);
+                    print!("{}", miningchars[attempts%3]);
 
                     // Confirm tx
                     if skip_confirm {
@@ -162,9 +163,9 @@ impl Miner {
                     }
                     for _ in 0..CONFIRM_RETRIES {
                         std::thread::sleep(Duration::from_millis(CONFIRM_DELAY));
-                        match client.get_signature_statuses(&sigs).await {
+                        match client.get_signature_statuses(&[sig]).await {
                             Ok(signature_statuses) => {
-                                println!("Confirms: {:?}", signature_statuses.value);
+                                //println!("Confirms: {:?}", signature_statuses.value);
                                 for signature_status in signature_statuses.value {
                                     if let Some(signature_status) = signature_status.as_ref() {
                                         if signature_status.confirmation_status.is_some() {
@@ -176,7 +177,7 @@ impl Miner {
                                                 TransactionConfirmationStatus::Processed => {}
                                                 TransactionConfirmationStatus::Confirmed
                                                 | TransactionConfirmationStatus::Finalized => {
-                                                    println!("{} Success: Transaction landed!", chrono::offset::Local::now());
+                                                    println!("{} Success: Transaction landed! sig: {}", chrono::offset::Local::now(), sig);
                                                     return Ok(sig);
                                                 }
                                             }
@@ -193,7 +194,7 @@ impl Miner {
                             }
                         }
                     }
-                    println!("Transaction did not land");
+                    //println!("Transaction did not land");
                 }
 
                 // Handle submit errors

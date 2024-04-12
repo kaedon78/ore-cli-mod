@@ -1,4 +1,3 @@
-use fastrand;
 use crossbeam::thread;
 use std::{
     collections::HashMap,
@@ -55,6 +54,10 @@ impl Miner {
         let mut reward_rate_count = 0;
         let mut reward_rate_retries = 0;
         let mut last_reward_rate = 0 as f64;
+        let mut last_submit_time = 0;
+        let mut total_times_mined = 0;
+        let mut total_mining_mills = 0;
+        let mut total_submit_mills = 0;
 
         // Start mining loop
         loop {
@@ -65,15 +68,21 @@ impl Miner {
 
             stdout.write_all(b"\x1b[2J\x1b[3J\x1b[H").ok();
             
+            if last_submit_time > 0 {
+                println!("Last reward took {} seconds to land\n", last_submit_time/1000);
+            }
+            
             for wallet in 1..WALLETS+1 {
                 let balance = self.get_ore_display_balance(wallet).await;
-                println!("Balance: {} ORE", balance);
+                println!("Wallet {} balance: {} ORE", wallet, balance);
             }
 
-            println!("Reward rate: {} ORE", reward_rate);
-            println!("Using priority fee: {} lamports", priority_fee);
-            
-            println!("Avg Reward rate: {} ORE", reward_rate_sum as f64 / reward_rate_count as f64);
+            println!("Current reward rate: {} ORE", reward_rate);
+            println!("Using priority fee: {} micro-lamports", priority_fee);
+            println!("Avg reward rate: {} ORE", reward_rate_sum as f64 / reward_rate_count as f64);
+            if total_times_mined > 0 {
+                println!("Avg time per mine: {} seconds", (total_submit_mills+total_mining_mills) / total_times_mined / 1000);
+            }
            
             //don't count same rate repeating
             if last_reward_rate as f64 != reward_rate {
@@ -84,9 +93,10 @@ impl Miner {
 
             //if reward less than average, retry a few times
             if reward_rate < (reward_rate_sum as f64 / reward_rate_count as f64) * 0.875 {
+                println!("Current reward rate less than average, waiting a few more seconds...");
                 if reward_rate_retries < 5 {
                     reward_rate_retries += 1;
-                    std::thread::sleep(Duration::from_millis(4000));
+                    std::thread::sleep(Duration::from_millis(3000));
                     continue;
                 }
                 else {
@@ -104,25 +114,32 @@ impl Miner {
             */
 
             // Escape sequence that clears the screen and the scrollback buffer
-            println!("\nMining for a valid hashes...");
+            println!("\nMining for valid hashes...");
             let mut next_hashes: HashMap<u64, KeccakHash> = HashMap::new();
             let mut nonces: HashMap<u64, u64> = HashMap::new();
 
+            let mut total_mine_time = 0;
             for wallet in 1..WALLETS+1 {
-                println!("Wallet {} : {}", wallet, self.signer_by_number(wallet).pubkey().to_string());
                 let proof = get_proof(&self.rpc_client, self.signer_by_number(wallet).pubkey()).await;
-                println!("Proof Hash {} : {}", wallet, proof.hash.to_string());
+                //println!("Proof Hash {} : {}", wallet, proof.hash.to_string());
                 let rewards = (proof.claimable_rewards as f64) / (10f64.powf(ore::TOKEN_DECIMALS as f64));
-                println!("Rewards Available {} : {}", wallet, rewards);
-                let (next_hash, nonce) = self.find_next_hash_par(&self.signer_by_number(wallet), proof.hash.into(), treasury.difficulty.into(), threads as usize);
-                println!("Next Hash {} : {}", wallet, next_hash.to_string());
+                println!("Wallet {} claimable rewards: {} ORE", wallet, rewards);
+                let start_time = Instant::now();     
+                let (next_hash, nonce) = self.find_next_hash_par(&self.signer_by_number(wallet), proof.hash.into(), treasury.difficulty.into(), threads);
+                total_mine_time += start_time.elapsed().as_millis();
+                //println!("Next Hash {} : {}", wallet, next_hash.to_string());
                 next_hashes.insert(wallet, next_hash);
                 nonces.insert(wallet, nonce);
             }
+            total_times_mined += 1;
+            total_mining_mills += total_mine_time;
+            println!("This hash mining time: {} seconds", total_mine_time/1000);
+            println!("Avg hash mining time: {} seconds", total_mining_mills/total_times_mined/1000);
 
             // Submit mine tx.
             // Use busses randomly so on each epoch, transactions don't pile on the same busses
             //println!("\n\nSubmitting hash for validation...");
+             let start_time_submit = Instant::now();                 
             'submit: loop {
                 // Double check we're submitting for the right challenge
                 for wallet in 1..WALLETS+1 {
@@ -162,7 +179,7 @@ impl Miner {
                 // Submit request.
                 let bus = self.find_bus_id(treasury.reward_rate).await;
                 let bus_rewards = (bus.rewards as f64) / (10f64.powf(ore::TOKEN_DECIMALS as f64));
-                println!("Sending on bus {} ({} ORE)", bus.id, bus_rewards);
+                println!("\nSending on bus {} ({} ORE)", bus.id, bus_rewards);
                 let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(CU_LIMIT_MINE);
                 let cu_price_ix =
                     ComputeBudgetInstruction::set_compute_unit_price(priority_fee);
@@ -203,6 +220,8 @@ impl Miner {
                     }
                 }
             }
+            last_submit_time = start_time_submit.elapsed().as_millis();
+            total_submit_mills += last_submit_time;
         }
     }
 
@@ -243,55 +262,40 @@ impl Miner {
         signer: &Keypair,
         hash: KeccakHash,
         difficulty: KeccakHash,
-        threads: usize,
+        threads: u64,
     ) -> (KeccakHash, u64) {
-        let start_time = Instant::now();     
         let found_solution = Arc::new(AtomicBool::new(false));
         let solution = Arc::new(Mutex::new((KeccakHash::new_from_array([0; 32]), 0)));
-              
-        println!("Difficulty is: {}", difficulty.to_string());
-
+        let pubkey = signer.pubkey();
+        let work_per_thread = u64::MAX / threads;
+    
         thread::scope(|s| {
             for t in 0..threads {
                 let found_solution = Arc::clone(&found_solution);
                 let solution = Arc::clone(&solution);
-                let n_min = u64::MAX.saturating_div(threads as u64).saturating_mul(t as u64);
-                let n_max = n_min + u64::MAX.saturating_div(threads as u64);
-                let pubkey = signer.pubkey();
-
+                let start_nonce = t * work_per_thread;
+                let end_nonce = start_nonce + work_per_thread;
                 s.spawn(move |_| {
-                    let mut counter = 0;
-                    loop {
-                        // just random guess, nothing fancy
-                        let nonce = fastrand::u64(n_min..n_max);
-
+                    for nonce in start_nonce..end_nonce {
+                        if nonce % 100_000 == 0 && found_solution.load(Ordering::Relaxed) {
+                            break;
+                        }
                         let next_hash = hashv(&[
                             hash.as_ref(),
                             pubkey.as_ref(),
                             nonce.to_le_bytes().as_ref(),
                         ]);
-                        
-                        counter += 1;
-                        if counter % 10_000 == 0 && found_solution.load(Ordering::Relaxed) {
-                            return;
-                        }
-
-                        if next_hash.le(&difficulty) {
-                            //println!("Correct guess is: {} by thread {}", nonce, t);
+                        if next_hash <= difficulty {
                             found_solution.store(true, Ordering::Relaxed);
-                            let mut w_solution = solution.lock().expect("failed to lock mutex");
-                            *w_solution = (next_hash, nonce);
-                            return;
+                            let mut sol = solution.lock().unwrap();
+                            *sol = (next_hash, nonce);
+                            break;
                         }
                     }
                 });
             }
-        })
-        .unwrap();
-
-        let elapsed_time = start_time.elapsed().as_millis();
-        println!("Elapsed mine time: {}", elapsed_time);
-
+        }).unwrap();
+    
         let r_solution = solution.lock().expect("Failed to get lock");
         *r_solution
     }

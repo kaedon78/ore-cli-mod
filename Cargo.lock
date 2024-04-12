@@ -2458,7 +2458,6 @@ dependencies = [
  "chrono",
  "clap 4.5.4",
  "crossbeam",
- "fastrand",
  "futures",
  "log",
  "ore-program",

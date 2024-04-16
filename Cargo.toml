@@ -33,3 +33,4 @@ spl-token = { version = "^4", features = ["no-entrypoint"] }
 spl-associated-token-account = { version = "^2.2", features = [ "no-entrypoint" ] }
 tokio = "1.35.1"
 sha256 = "1.5.0"
+num-traits = "0.2"

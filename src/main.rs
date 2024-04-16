@@ -24,6 +24,12 @@ use solana_sdk::{
     signature::{read_keypair_file, Keypair},
 };
 
+/*
+#[link(name = "keccakHash", kind = "static")]
+extern "C" {
+    fn keccakHash(input: *const u8, output: *mut u8, digestSize: u32);
+}
+*/
 const WALLETS: u64 = 5;
 
 struct Miner {
@@ -34,6 +40,7 @@ struct Miner {
     pub keypair_filepath5: Option<String>,
     pub priority_fee: u64,
     pub rpc_client: Arc<RpcClient>,
+    //pub use_gpu: u64,
 }
 
 #[derive(Parser, Debug)]
@@ -104,7 +111,16 @@ struct Args {
         global = true
     )]
     priority_fee: u64,
-
+    /*
+    #[arg(
+        long,
+        value_name = "USE_GPU",
+        help = "Use GPU instead of CPU",
+        default_value = "0",
+        global = true
+    )]
+    use_gpu: u64,    
+    */
     #[command(subcommand)]
     command: Commands,
 }
@@ -213,6 +229,17 @@ struct UpdateDifficultyArgs {}
 
 #[tokio::main]
 async fn main() {
+
+    /*
+    let input = b"Hello, CUDA!";
+    let digest_size = 256 as u32; // Choose the digest size (in bits)
+    let mut output = vec![0; digest_size as usize / 8];
+    // Call the CUDA function
+    unsafe {
+        keccakHash(input.as_ptr(), output.as_mut_ptr(), digest_size);
+    }
+    */
+
     let args = Args::parse();
 
     // Load the config file from custom path, the default path, or use default config values
@@ -246,6 +273,7 @@ async fn main() {
         Some(default_keypair3),
         Some(default_keypair4),
         Some(default_keypair5),
+        //args.use_gpu,
     ));
 
     // Execute user command.
@@ -296,6 +324,7 @@ impl Miner {
         keypair_filepath3: Option<String>,
         keypair_filepath4: Option<String>,
         keypair_filepath5: Option<String>,
+        //use_gpu: u64
     ) -> Self {
         Self {
             rpc_client,
@@ -305,6 +334,7 @@ impl Miner {
             keypair_filepath4,
             keypair_filepath5,
             priority_fee,
+            //use_gpu
         }
     }
 

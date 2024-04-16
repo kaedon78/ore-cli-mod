@@ -19,7 +19,7 @@ impl Miner {
             init_txns.push(ix);        
         }
 
-        self.send_and_confirm(&init_txns.into_boxed_slice(), false, false)
+        self.send_and_confirm(&init_txns.into_boxed_slice(), false, false, 0)
             .await
             .expect("Transaction failed");        
         }

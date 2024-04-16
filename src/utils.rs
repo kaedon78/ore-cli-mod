@@ -11,6 +11,7 @@ use solana_sdk::clock::Clock;
 use spl_associated_token_account::get_associated_token_address;
 
 pub async fn get_treasury(client: &RpcClient) -> Treasury {
+    //println!("Calling getaccount for treasury");
     let data = client
         .get_account_data(&TREASURY_ADDRESS)
         .await
@@ -20,6 +21,7 @@ pub async fn get_treasury(client: &RpcClient) -> Treasury {
 
 pub async fn get_proof(client: &RpcClient, authority: Pubkey) -> Proof {
     let proof_address = proof_pubkey(authority);
+    //println!("Calling getaccount for proof");
     let data = client
         .get_account_data(&proof_address)
         .await
@@ -28,6 +30,7 @@ pub async fn get_proof(client: &RpcClient, authority: Pubkey) -> Proof {
 }
 
 pub async fn get_clock_account(client: &RpcClient) -> Clock {
+    //println!("Calling getaccount for clock");
     let data = client
         .get_account_data(&sysvar::clock::ID)
         .await

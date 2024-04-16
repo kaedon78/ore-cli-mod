@@ -83,7 +83,7 @@ impl Miner {
             }
 
             match self
-                .send_and_confirm(&claim_ixs.into_boxed_slice(), false, false, signers)
+                .send_and_confirm(&claim_ixs.into_boxed_slice(), false, false, signers, 0)
                 .await
             {
                 Ok(sig) => {
@@ -121,7 +121,7 @@ impl Miner {
             &spl_token::id(),
         );
         println!("Creating token account {}...", token_account_pubkey);
-        match self.send_and_confirm(&[ix], true, false, vec![&signer]).await {
+        match self.send_and_confirm(&[ix], true, false, vec![&signer], 0).await {
             Ok(_sig) => println!("Created token account {:?}", token_account_pubkey),
             Err(e) => println!("Transaction failed: {:?}", e),
         }

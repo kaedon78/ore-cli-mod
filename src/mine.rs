@@ -8,7 +8,7 @@ use std::{
 };
 use rand::Rng;
 use ore::{self, state::Bus, BUS_ADDRESSES, BUS_COUNT, EPOCH_DURATION};
-use solana_program::{keccak::HASH_BYTES, program_memory::sol_memcmp, pubkey::Pubkey};
+use solana_program::{keccak::HASH_BYTES, program_memory::sol_memcmp, pubkey::Pubkey,pubkey::PUBKEY_BYTES};
 use solana_sdk::{
     instruction::Instruction,
     compute_budget::ComputeBudgetInstruction,
@@ -24,6 +24,11 @@ use crate::{
 };
 use chrono::{Local};
 use chrono::prelude::DateTime;
+
+//use ocl::{ProQue, Buffer, Platform, Device, Kernel};
+
+use std::fs;
+use std::fs::File;
 
 /*
 struct SharedNextHashRangeData {
@@ -97,10 +102,10 @@ impl Miner {
             
             //println!("Main wallet balance: {} ORE", self.get_ore_display_balance(1).await);
 
-            println!("Current reward rate: {} ORE", reward_rate);
             println!("Using priority fee: {} micro-lamports", priority_fee);
-            println!("Avg reward rate: {} ORE", reward_rate_sum as f64 / reward_rate_count as f64);
+            println!("Current reward rate: {} ORE", reward_rate);
             if total_times_mined > 0 {
+                println!("Avg reward rate: {} ORE", reward_rate_sum as f64 / reward_rate_count as f64);
                 println!("Total txns: {}", total_times_mined);
                 println!("Avg time per txn: {} seconds", (total_submit_mills+total_mining_mills) / total_times_mined / 1000);
             }
@@ -161,11 +166,25 @@ impl Miner {
                 .map(|(signer, proof)| (solana_sdk::keccak::Hash::new_from_array(proof.hash.0), *signer))
                 .collect::<Vec<_>>();
 
+            //opencl test
+            //let (next_hash_cl, nonce_cl) = self.find_next_hash_par_with_opencl(hash_and_pubkey[0].0, treasury.difficulty.into(), hash_and_pubkey[0].1, 64).await;
+            //println!("opencl test {} {}", next_hash_cl.to_string(), nonce_cl);
+            //opencl test
+
+            let file_path = "sync_file.txt";
+            // Check if the sync file exists
+            while fs::metadata(file_path).is_ok() {
+                println!("Waiting on GPU to be free...");
+                std::thread::sleep(Duration::from_millis(10000));
+            }
+            
+            let mut file = File::create(file_path);
+
             let start_time = Instant::now();
             println!("Mining initial {} hashes started...", hash_and_pubkey.len());
             let mut mining_result = self.find_next_hash_par_gpu(&treasury.difficulty.into(), &hash_and_pubkey, 0).await;
             println!("Mining initial {} hashes took {} sec", hash_and_pubkey.len(), start_time.elapsed().as_millis()/1000);
-            
+
             println!("Checking all hashes are valid...");
             for wallet in 1..WALLETS+1 {
                 //println!("{}, {}, {}, {}", treasury.difficulty.to_string(), proof.hash.to_string(), self.signer_by_number(wallet).pubkey().to_string(), hash_and_pubkey.len());
@@ -206,6 +225,10 @@ impl Miner {
                 //next_hashes.insert(wallet, next_hash);
                 //nonces.insert(wallet, nonce);
             }
+
+            // Remove the file
+            fs::remove_file(file_path);
+
             /*
             let hash_and_pubkey = all_pubkey
                 .iter()
@@ -338,7 +361,7 @@ impl Miner {
                     .await
                 {
                     Ok(sig) => {
-                        println!("{} Success: {}", chrono::offset::Local::now(), sig);
+                        println!("{} Txn success: {}", chrono::offset::Local::now(), sig);
 
                         last_submit_time = start_time_submit.elapsed().as_millis();
                         total_submit_mills += last_submit_time;
@@ -348,8 +371,23 @@ impl Miner {
 
                         break;
                     }
-                    Err(_err) => {
-                        // TODO
+                    Err(err) => {
+                        if  !err.to_string().contains("Epoch reset") && 
+                            !err.to_string().contains("Max retries") &&
+                            !err.to_string().contains("This transaction has already been processed") {
+                            println!("{} Txn error: {}", chrono::offset::Local::now(), err.to_string());
+                            std::thread::sleep(Duration::from_millis(5000));
+                        }
+                        else if err.to_string().contains("Epoch reset") {
+                            //std::thread::sleep(Duration::from_millis(1000));
+                        }
+                        else if err.to_string().contains("This transaction has already been processed") {
+                            last_submit_time = start_time_submit.elapsed().as_millis();
+                            total_submit_mills += last_submit_time;
+
+                            total_times_mined += 1;
+                            total_mining_mills += this_mine_time;
+                        }
                     }
                 }
             }
@@ -495,6 +533,72 @@ impl Miner {
             .expect("REASON")
             */
     }
+
+    /*
+    async fn find_next_hash_par_with_opencl(
+        &self,
+        hash: KeccakHash,
+        difficulty: KeccakHash,
+        pubkey: Pubkey,
+        threads: u64,
+    ) -> (KeccakHash, u64) {
+        // Create OpenCL program queue
+        let pro_que = ocl::ProQue::builder()
+            .src(include_str!("ore.cl"))
+            .dims(1 as usize) // Set the number of work-items (threads)
+            .build()
+            .unwrap();
+
+        // Create buffers for input and output data
+        let current_hash_buffer = Buffer::<u8>::builder()
+            .queue(pro_que.queue().clone())
+            .len(HASH_BYTES)
+            .build()
+            .unwrap();
+        let pubkey_buffer = Buffer::<u8>::builder()
+            .queue(pro_que.queue().clone())
+            .len(PUBKEY_BYTES)
+            .build()
+            .unwrap();
+
+        let solution_nonce = Buffer::<u64>::builder().queue(pro_que.queue().clone()).len(threads as usize).build().unwrap();
+        let solution_hash = Buffer::<u8>::builder().queue(pro_que.queue().clone()).len(threads as usize * HASH_BYTES).build().unwrap();
+
+        current_hash_buffer.cmd().write(&hash.to_bytes()[..]).enq().unwrap();
+        pubkey_buffer.cmd().write(&pubkey.to_bytes()[..]).enq().unwrap();
+
+        let difficulty_value = u32::from_le_bytes(difficulty.to_bytes()[..4].try_into().unwrap());
+        let work_per_thread = (u64::MAX / threads) as u64;
+
+        // Create kernel
+        let kernel = Kernel::builder()
+            .program(&pro_que.program())
+            .name("calculate_hashes")
+            .queue(pro_que.queue().clone())
+            .global_work_size((threads as usize, 1, 1))
+            .arg(&current_hash_buffer)
+            .arg(&pubkey_buffer)
+            .arg(&solution_nonce)
+            .arg(&solution_hash)
+            .arg(difficulty_value) // Difficulty
+            .arg(work_per_thread)
+            .build().unwrap();
+
+        // Execute kernel
+        unsafe {
+            kernel.enq().unwrap();
+        }
+
+        // Retrieve result from GPU
+        let mut nonce_result = vec![0u64; threads as usize];
+        solution_nonce.read(&mut nonce_result).enq().unwrap();
+        let mut hash_result = vec![0u8; threads as usize * HASH_BYTES];
+        solution_hash.read(&mut hash_result).enq().unwrap();
+
+        let hash_out = hash_result.into_boxed_slice();
+        (solana_sdk::keccak::Hash( (*hash_out).try_into().unwrap()), nonce_result[0])
+    }
+    */
 
     pub fn validate_hash(
         &self,

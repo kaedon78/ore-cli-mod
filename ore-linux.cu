@@ -1,6 +1,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <time.h>
+#include <stdlib.h>
+#include <limits>
 
 void gpu_init();
 int gcd(int a, int b);
@@ -204,8 +207,6 @@ void find_message()
 	fread(data, 1, 33, stdin);
 	uint8_t* diff = data + 1;
 
-	uint64_t starting_tid = 0;
-
 	int* d_done;
 	uint8_t* d_diff;
 	uint8_t* d_preimage;
@@ -229,8 +230,8 @@ void find_message()
 		int index = 0;
 		while (!h_done[0]) {
 			index++;
-			brute_force_single << <number_blocks, number_threads >> > (d_diff, d_preimage, d_done, starting_tid);
-			starting_tid += number_blocks * number_threads;
+			uint64_t r = rand() * (std::numeric_limits<uint64_t>::max() - (number_blocks * number_threads));
+			brute_force_single << <number_blocks, number_threads >> > (d_diff, d_preimage, d_done, r);
 			cudaMemcpy(h_done, d_done, sizeof(int), cudaMemcpyDeviceToHost);
 			cudaError_t cudaerr = cudaDeviceSynchronize();
 			if (cudaerr != cudaSuccess) {
@@ -245,6 +246,7 @@ void find_message()
 
 int main(int argc, char** argv)
 {
+	srand(time(NULL));
 	gpu_init();
 	find_message();
 	return EXIT_SUCCESS;

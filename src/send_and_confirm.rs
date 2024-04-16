@@ -82,11 +82,11 @@ impl NonceManager {
 use crate::Miner;
 
 const RPC_RETRIES: usize = 0;
-const GATEWAY_RETRIES: usize = 75;
+const GATEWAY_RETRIES: usize = 150;
 const CONFIRM_RETRIES: usize = 1;
 
 const CONFIRM_DELAY: u64 = 0;
-const GATEWAY_DELAY: u64 = 600;
+const GATEWAY_DELAY: u64 = 300;
 
 impl Miner {
     pub async fn send_and_confirm(
@@ -166,17 +166,17 @@ impl Miner {
             //let mut sigs = vec![];
             //let mut latest_slot = slot;
 
-            let miningchars = ["\u{1FAA8}","\u{26CF} ","\u{1F48E}"];
+            let miningchars = ["\u{1FAA8} ","\u{26CF}  ","\u{1F48E} "];
             let mut attempts = 0;
             //let mut gatewayError = false;
             loop {
-            
+                
                 if epoch_threshold > 0 {
                     let d = UNIX_EPOCH + Duration::from_secs(epoch_threshold-5);
                     let n = SystemTime::now();
                     if n > d {
-                        println!("\nWaiting for treasury epoch reset...");
-                        std::thread::sleep(Duration::from_millis(2000));
+                        println!("\nWait for treasury epoch reset...");
+                        std::thread::sleep(Duration::from_millis(5000));
                         //println!("{} {}", n.duration_since(UNIX_EPOCH).unwrap().as_secs(), d.duration_since(UNIX_EPOCH).unwrap().as_secs());
                         return Err(ClientError {
                             request: None,
@@ -229,13 +229,14 @@ impl Miner {
                                 }
                                 // Handle confirmation errors
                                 Err(err) => {
-                                    if !err.to_string().contains("0x1") {
+                                    if  !err.to_string().contains("0x1") &&
+                                        !err.to_string().contains("This transaction has already been processed"){
                                         println!("\nGet sigs error: {:?}", err.to_string());
                                     }
                                     //gatewayError = true;
                                     return Err(ClientError {
                                         request: None,
-                                        kind: ClientErrorKind::Custom("".into()),
+                                        kind: ClientErrorKind::Custom(err.to_string().into()),
                                     });
                                 }
                             }
@@ -246,13 +247,15 @@ impl Miner {
                     }
                     // Handle submit errors
                     Err(err) => {
-                        if !err.to_string().contains("0x1") {
+                        if  !err.to_string().contains("0x1") &&
+                            !err.to_string().contains("This transaction has already been processed")
+                        {
                             println!("\nSend txn error {:?}", err.to_string());
                         }
                         //gatewayError = true;
                         return Err(ClientError {
                             request: None,
-                            kind: ClientErrorKind::Custom("".into()),
+                            kind: ClientErrorKind::Custom(err.to_string().into()),
                         });
                     }
                 }

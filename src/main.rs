@@ -5,10 +5,13 @@ mod cu_limits;
 #[cfg(feature = "admin")]
 mod initialize;
 mod mine;
+mod nonce_manager;
 mod register;
 mod rewards;
 mod send_and_confirm;
+mod stats;
 mod treasury;
+mod transaction;
 #[cfg(feature = "admin")]
 mod update_admin;
 #[cfg(feature = "admin")]
@@ -23,6 +26,7 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     signature::{read_keypair_file, Keypair},
 };
+use sysinfo::{System};
 
 /*
 #[link(name = "keccakHash", kind = "static")]
@@ -30,17 +34,13 @@ extern "C" {
     fn keccakHash(input: *const u8, output: *mut u8, digestSize: u32);
 }
 */
-const WALLETS: u64 = 5;
 
 struct Miner {
-    pub keypair_filepath1: Option<String>,
-    pub keypair_filepath2: Option<String>,
-    pub keypair_filepath3: Option<String>,
-    pub keypair_filepath4: Option<String>,
-    pub keypair_filepath5: Option<String>,
     pub priority_fee: u64,
     pub rpc_client: Arc<RpcClient>,
-    //pub use_gpu: u64,
+    pub use_gpu: bool,
+    pub wallets: Vec<Keypair>,
+    pub threads: u64
 }
 
 #[derive(Parser, Debug)]
@@ -111,7 +111,7 @@ struct Args {
         global = true
     )]
     priority_fee: u64,
-    /*
+    
     #[arg(
         long,
         value_name = "USE_GPU",
@@ -120,7 +120,16 @@ struct Args {
         global = true
     )]
     use_gpu: u64,    
-    */
+
+    #[arg(
+        long,
+        value_name = "THREADS",
+        help = "Thread count for CPU mining only",
+        default_value = "0",
+        global = true
+    )]
+    threads: u64,    
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -188,7 +197,7 @@ struct MineArgs {
         short,
         value_name = "THREAD_COUNT",
         help = "The number of threads to dedicate to mining",
-        default_value = "1"
+        default_value = "0"
     )]
     threads: u64,
 }
@@ -229,17 +238,6 @@ struct UpdateDifficultyArgs {}
 
 #[tokio::main]
 async fn main() {
-
-    /*
-    let input = b"Hello, CUDA!";
-    let digest_size = 256 as u32; // Choose the digest size (in bits)
-    let mut output = vec![0; digest_size as usize / 8];
-    // Call the CUDA function
-    unsafe {
-        keccakHash(input.as_ptr(), output.as_mut_ptr(), digest_size);
-    }
-    */
-
     let args = Args::parse();
 
     // Load the config file from custom path, the default path, or use default config values
@@ -257,48 +255,63 @@ async fn main() {
     // Initialize miner.
     let cluster = args.rpc.unwrap_or(cli_config.json_rpc_url);
     println!("URL {}", cluster);
+    let mut wallets = vec![];
     let default_keypair1 = args.keypair1.unwrap_or(cli_config.keypair_path.clone());
+    wallets.push(read_wallet(default_keypair1));
+    
     let default_keypair2 = args.keypair2.unwrap_or("".to_string());
+    if default_keypair2 != "" {wallets.push(read_wallet(default_keypair2));}
+    
     let default_keypair3 = args.keypair3.unwrap_or("".to_string());
+    if default_keypair3 != "" {wallets.push(read_wallet(default_keypair3));}
+    
     let default_keypair4 = args.keypair4.unwrap_or("".to_string());
+    if default_keypair4 != "" {wallets.push(read_wallet(default_keypair4));}
+    
     let default_keypair5 = args.keypair5.unwrap_or("".to_string());
+    if default_keypair5 != "" {wallets.push(read_wallet(default_keypair5));}
 
     let rpc_client = RpcClient::new_with_commitment(cluster, CommitmentConfig::confirmed());
-
+    let use_gpu = args.use_gpu != 0;
+    let mut threads = args.threads;
+    
+    if !use_gpu {
+        if threads == 0 {
+            println!("Initializing thread count...");
+            let mut system = System::new_all();
+            system.refresh_all();
+            println!("\tCPU: {} {}, {} Cores, {} Mhz", system.cpus()[0].brand(), system.cpus()[0].name(), system.cpus().len(), system.cpus()[0].frequency());
+            threads += system.cpus().len() as u64;
+        }
+    }
+    
     let miner = Arc::new(Miner::new(
         Arc::new(rpc_client),
         args.priority_fee,
-        Some(default_keypair1),
-        Some(default_keypair2),
-        Some(default_keypair3),
-        Some(default_keypair4),
-        Some(default_keypair5),
-        //args.use_gpu,
+        use_gpu,
+        wallets,
+        threads
     ));
 
     // Execute user command.
     match args.command {
         Commands::Balance(_args) => {
-            for wallet in 1..WALLETS+1 {
-                miner.balance_by_number(wallet).await;
-            }
+            miner.all_balances().await;
         }
         Commands::Busses(_) => {
             miner.busses().await;
         }
         Commands::Rewards(_args) => {
-            for wallet in 1..WALLETS+1 {    
-                miner.rewards_by_number(wallet).await;
-            }
+            miner.all_rewards().await;
         }
         Commands::Treasury(_) => {
             miner.treasury().await;
         }
         Commands::Mine(args) => {
-            miner.mine(args.threads).await;
+            miner.mine().await;
         }
         Commands::Claim(args) => {
-            miner.claim(args.beneficiary.clone(), args.amount).await;
+            miner.claim_all(args.beneficiary.clone(), args.amount).await;
         }
         #[cfg(feature = "admin")]
         Commands::Initialize(_) => {
@@ -315,51 +328,33 @@ async fn main() {
     }
 }
 
+pub fn read_wallet(keypair_filepath: String) -> Keypair {
+    if keypair_filepath != "" {
+        read_keypair_file(keypair_filepath).unwrap()
+    }
+    else {
+        panic!("No keypair provided")
+    }
+}
+
 impl Miner {
     pub fn new(
         rpc_client: Arc<RpcClient>, 
         priority_fee: u64, 
-        keypair_filepath1: Option<String>, 
-        keypair_filepath2: Option<String>, 
-        keypair_filepath3: Option<String>,
-        keypair_filepath4: Option<String>,
-        keypair_filepath5: Option<String>,
-        //use_gpu: u64
+        use_gpu: bool,
+        wallets: Vec<Keypair>,
+        threads: u64,
     ) -> Self {
         Self {
             rpc_client,
-            keypair_filepath1,
-            keypair_filepath2,
-            keypair_filepath3,
-            keypair_filepath4,
-            keypair_filepath5,
             priority_fee,
-            //use_gpu
+            use_gpu,
+            wallets,
+            threads,
         }
     }
 
-    pub fn signer(&self) -> Keypair {
-        self.signer_by_number(1)
-    }
-
-    pub fn signer_by_number(&self, keypair_number: u64) -> Keypair {
-        let mut keypair_filepath = &self.keypair_filepath1;
-        if keypair_number == 2 {
-            keypair_filepath = &self.keypair_filepath2;
-        }
-        if keypair_number == 3 {
-            keypair_filepath = &self.keypair_filepath3;
-        }
-        if keypair_number == 4 {
-            keypair_filepath = &self.keypair_filepath4;
-        }
-        if keypair_number == 5 {
-            keypair_filepath = &self.keypair_filepath5;
-        }
-
-        match keypair_filepath.clone() {
-            Some(filepath) => read_keypair_file(filepath).unwrap(),
-            None => panic!("No keypair provided"),
-        }
-    }
+    pub fn signer(&self) -> &Keypair {
+        &self.wallets[0]
+    }    
 }

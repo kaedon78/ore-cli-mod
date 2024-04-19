@@ -116,14 +116,30 @@ __device__ void keccak(const char* message, int message_len, unsigned char* outp
 	uint64_t state[25];
 	uint8_t temp[144];
 	int rsize = 136;
-	int rsize_byte = 17;
+	//int rsize_byte = 17;
 
 	memset(state, 0, sizeof(state));
 
 	for (; message_len >= rsize; message_len -= rsize, message += rsize) {
-		for (int i = 0; i < rsize_byte; i++) {
-			state[i] ^= ((uint64_t*)message)[i];
-		}
+		//for (int i = 0; i < rsize_byte; i++) {
+			state[0] ^= ((uint64_t*)message)[0];
+			state[1] ^= ((uint64_t*)message)[1];
+			state[2] ^= ((uint64_t*)message)[2];
+			state[3] ^= ((uint64_t*)message)[3];
+			state[4] ^= ((uint64_t*)message)[4];
+			state[5] ^= ((uint64_t*)message)[5];
+			state[6] ^= ((uint64_t*)message)[6];
+			state[7] ^= ((uint64_t*)message)[7];
+			state[8] ^= ((uint64_t*)message)[8];
+			state[9] ^= ((uint64_t*)message)[9];
+			state[10] ^= ((uint64_t*)message)[10];
+			state[11] ^= ((uint64_t*)message)[11];
+			state[12] ^= ((uint64_t*)message)[12];
+			state[13] ^= ((uint64_t*)message)[13];
+			state[14] ^= ((uint64_t*)message)[14];
+			state[15] ^= ((uint64_t*)message)[15];
+			state[16] ^= ((uint64_t*)message)[16];
+		//}
 		keccak256(state);
 	}
 
@@ -133,9 +149,25 @@ __device__ void keccak(const char* message, int message_len, unsigned char* outp
 	memset(temp + message_len, 0, rsize - message_len);
 	temp[rsize - 1] |= 0x80;
 
-	for (int i = 0; i < rsize_byte; i++) {
-		state[i] ^= ((uint64_t*)temp)[i];
-	}
+	//for (int i = 0; i < rsize_byte; i++) {
+		state[0] ^= ((uint64_t*)temp)[0];
+		state[1] ^= ((uint64_t*)temp)[1];
+		state[2] ^= ((uint64_t*)temp)[2];
+		state[3] ^= ((uint64_t*)temp)[3];
+		state[4] ^= ((uint64_t*)temp)[4];
+		state[5] ^= ((uint64_t*)temp)[5];
+		state[6] ^= ((uint64_t*)temp)[6];
+		state[7] ^= ((uint64_t*)temp)[7];
+		state[8] ^= ((uint64_t*)temp)[8];
+		state[9] ^= ((uint64_t*)temp)[9];
+		state[10] ^= ((uint64_t*)temp)[10];
+		state[11] ^= ((uint64_t*)temp)[11];
+		state[12] ^= ((uint64_t*)temp)[12];
+		state[13] ^= ((uint64_t*)temp)[13];
+		state[14] ^= ((uint64_t*)temp)[14];
+		state[15] ^= ((uint64_t*)temp)[15];
+		state[16] ^= ((uint64_t*)temp)[16];
+	//}
 
 	keccak256(state);
 	memcpy(output, state, output_len);
@@ -143,13 +175,19 @@ __device__ void keccak(const char* message, int message_len, unsigned char* outp
 
 __device__ void generate_message(uint8_t* message, uint64_t tid)
 {
-	int len = 0;
-	const int num_chars = 94;
+	//int len = 0;
+	/*const int num_chars = 94;
 	while (len < 8)
-	{
-		message[len++] = tid % 256;
-		tid /= num_chars;
-	}
+	{*/
+		message[0] = tid % 256, tid /= 94;
+		message[1] = tid % 256, tid /= 94;
+		message[2] = tid % 256, tid /= 94;
+		message[3] = tid % 256, tid /= 94;
+		message[4] = tid % 256, tid /= 94;
+		message[5] = tid % 256, tid /= 94;
+		message[6] = tid % 256, tid /= 94;
+		message[7] = tid % 256, tid /= 94;
+	//}
 }
 
 __global__ void brute_force_single(uint8_t* d_diff, uint8_t* d_preimage, int* done, uint64_t starting_tid)
@@ -210,11 +248,11 @@ void find_message()
 	fread(data, 1, 33, stdin);
 	uint8_t* diff = data + 1;
 
-	//uint64_t starting_tid = 0;
-
 	int* d_done;
 	uint8_t* d_diff;
 	uint8_t* d_preimage;
+	
+	uint64_t starting_tid = 0;
 
 	cudaMalloc((void**)&d_done, sizeof(int));
 	cudaMalloc((void**)&d_diff, 32);
@@ -235,8 +273,9 @@ void find_message()
 		int index = 0;
 		while (!h_done[0]) {
 			index++;
-			uint64_t r = rand() * (std::numeric_limits<uint64_t>::max() - (number_blocks * number_threads));
-			brute_force_single << <number_blocks, number_threads >> > (d_diff, d_preimage, d_done, r);
+			
+			brute_force_single << <number_blocks, number_threads >> > (d_diff, d_preimage, d_done, starting_tid);
+			starting_tid += number_blocks * number_threads;
 			cudaMemcpy(h_done, d_done, sizeof(int), cudaMemcpyDeviceToHost);
 			cudaError_t cudaerr = cudaDeviceSynchronize();
 			if (cudaerr != cudaSuccess) {

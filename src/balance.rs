@@ -5,8 +5,10 @@ use solana_sdk::{
 use crate::Miner;
 
 impl Miner {
-    pub async fn balance_by_number(&self, keypair_number: u64) {
-        self.balance(&self.signer_by_number(keypair_number)).await
+    pub async fn all_balances(&self) {
+        for wallet in self.wallets.iter() {
+            self.balance(&wallet).await
+        }
     }
 
     pub async fn balance(&self, signer: &Keypair) {

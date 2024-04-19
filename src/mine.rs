@@ -1,14 +1,19 @@
-use crossbeam::thread;
+use crossbeam::{
+    thread,
+    channel
+};
 use std::{
     io::{stdout, Write},
     sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
     time::{Duration, UNIX_EPOCH},
     env,
     time::Instant,
+    fs, 
+    fs::File
 };
 use rand::Rng;
 use ore::{self, state::Bus, BUS_ADDRESSES, BUS_COUNT, EPOCH_DURATION};
-use solana_program::{keccak::HASH_BYTES, program_memory::sol_memcmp, pubkey::Pubkey,pubkey::PUBKEY_BYTES};
+use solana_program::{keccak::HASH_BYTES, program_memory::sol_memcmp, pubkey::Pubkey};
 use solana_sdk::{
     instruction::Instruction,
     compute_budget::ComputeBudgetInstruction,
@@ -21,142 +26,92 @@ use crate::{
     cu_limits::{CU_LIMIT_MINE},
     utils::{get_clock_account, get_proof, get_treasury},
     Miner,
+    stats::MinerStats,
 };
+
 use chrono::{Local};
 use chrono::prelude::DateTime;
 
-//use ocl::{ProQue, Buffer, Platform, Device, Kernel};
-
-use std::fs;
-use std::fs::File;
-
-/*
-struct SharedNextHashRangeData {
-    min_hamming_distance: usize,
-    last_hamming_distance: usize,
-    range_step: usize,
-    range_decreases: usize,
-    nonce_min: usize,
-    nonce_max: usize,
-}        
-*/
-
-const WALLETS: u64 = 5;
+const sync_file_path: &str = "sync_file.txt";
 
 impl Miner {
-    pub async fn mine(&self, _threads: u64) {
-
-        /*let input = b"Hello, CUDA!";
-        let digest_size = 256; // Choose the digest size (in bits)
-        let mut output = vec![0u8; digest_size / 8];
-        unsafe {
-            cuda_wrapper::keccakHash(
-                input.as_ptr(),
-                output.as_mut_ptr(),
-                digest_size as u32,
-            );
-        }
-        println!("Keccak Hash: {:x?}", output);
-        */
+    pub async fn mine(&self) {
 
         // Register, if needed.
-        for wallet in 1..WALLETS+1 {
-            self.register_by_number(wallet).await;    
-        }        
+        self.register_all().await;
 
         let mut stdout = stdout();
-
-        let mut reward_rate_sum = 0 as f64;
-        let mut reward_rate_count = 0;
-        let mut last_reward_rate = 0 as f64;
-        let mut last_submit_time = 0;
-        let mut total_times_mined = 0;
-        let mut total_mining_mills = 0;
-        let mut total_submit_mills = 0;
+        let mut stats = MinerStats::new();
+        let mut test_mode = false;
+        let mut test_diff_array: [u8;32] = [0, 0, 0, 16, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255];
 
         // Start mining loop
         loop {
+            // Escape sequence that clears the screen and the scrollback buffer    
             stdout.write_all(b"\x1b[2J\x1b[3J\x1b[H").ok();
-            if last_submit_time > 0 {
-                println!("Last reward took {} seconds to land\n", last_submit_time/1000);
+
+            if stats.last_submit_time > 0 {
+                println!("Last reward took {} seconds to land\n", stats.last_submit_time/1000);
             }
 
             // Fetch account state
             let treasury = get_treasury(&self.rpc_client).await;
-            println!("Treasury Difficulty: {}", treasury.difficulty.to_string());
-            
-            let d = UNIX_EPOCH + Duration::from_secs(treasury.last_reset_at.try_into().unwrap());
-            let datetime = DateTime::<Local>::from(d);
-            let timestamp_str = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
-            println!("Treasury Last reset at: {}", timestamp_str);
-            
-            let threshold = treasury.last_reset_at.saturating_add(EPOCH_DURATION);
-            let d2 = UNIX_EPOCH + Duration::from_secs(threshold.try_into().unwrap());
-            let datetime2 = DateTime::<Local>::from(d2);
-            let timestamp_str2 = datetime2.format("%Y-%m-%d %H:%M:%S").to_string();
-            println!("Treasury Next reset at: {}", timestamp_str2);
+            println!("Treasury difficulty: {}", treasury.difficulty.to_string());
+            println!("Treasury last reset at: {}", self.get_last_reset_local(&treasury).format("%Y-%m-%d %H:%M:%S").to_string());
+            println!("Treasury next reset at: {}", self.get_next_reset_local(&treasury).format("%Y-%m-%d %H:%M:%S").to_string());
 
-            let reward_rate = (treasury.reward_rate as f64) / (10f64.powf(ore::TOKEN_DECIMALS as f64));
+            let mut mining_difficulty = treasury.difficulty;
             
+            //test mode - difficulty check
+            if mining_difficulty.to_string() == "11111111111111111111111111111111" {
+                test_mode = true;
+                mining_difficulty = KeccakHash::new_from_array(test_diff_array).into();
+
+                if stats.total_times_submitted > 0 {
+                    let avg_mine_time_sec = stats.total_mining_mills / stats.total_times_submitted as u128 / 1000;
+                    if avg_mine_time_sec < 40 && stats.last_mine_time  < 50000 {
+                        test_diff_array = self.get_next_difficulty(test_diff_array, 1);
+                        mining_difficulty = KeccakHash::new_from_array(test_diff_array).into();
+                        //stats.reset_stats();
+                    }
+                    else if avg_mine_time_sec > 50 || stats.last_mine_time  > 60000 {
+                        test_diff_array = self.get_next_difficulty(test_diff_array, -1);
+                        mining_difficulty = KeccakHash::new_from_array(test_diff_array).into();
+                        //stats.reset_stats();
+                    }
+                }                
+                println!("Mining paused, using test difficulty: [{},{}] : {}", test_diff_array[3], test_diff_array[4], mining_difficulty.to_string());    
+            }
+
+            let reward_rate = self.get_reward_rate(&treasury);
             let priority_fee = self.priority_fee;
             
             //println!("Main wallet balance: {} ORE", self.get_ore_display_balance(1).await);
 
             println!("Using priority fee: {} micro-lamports", priority_fee);
             println!("Current reward rate: {} ORE", reward_rate);
-            if total_times_mined > 0 {
-                println!("Avg reward rate: {} ORE", reward_rate_sum as f64 / reward_rate_count as f64);
-                println!("Total txns: {}", total_times_mined);
-                println!("Avg time per txn: {} seconds", (total_submit_mills+total_mining_mills) / total_times_mined / 1000);
-            }
+
+            stats.print_stats();
            
-            //don't count same rate repeating
-            if last_reward_rate as f64 != reward_rate {
-                last_reward_rate = reward_rate;
-                reward_rate_sum += reward_rate;
-                reward_rate_count += 1;
+            stats.update_avg_reward_rate(reward_rate);
+
+            //if reward much less than average, wait for reset
+            if stats.is_reward_rate_above_avg(reward_rate) {
+                println!("Current reward rate less than average, waiting for the next one...");    
+                self.wait_for_next_epoch().await;
             }
 
-            //if reward less than average, retry a few times
-            /*
-            if reward_rate < (reward_rate_sum as f64 / reward_rate_count as f64) * 0.875 {
-                println!("Current reward rate less than average, waiting a few more seconds...");
-                if reward_rate_retries < 3 {
-                    reward_rate_retries += 1;
-                    std::thread::sleep(Duration::from_millis(3000));
-                    continue;
-                }
-                else {
-                    reward_rate_retries = 0;
-                }
-            }
-            */
-
-            // test for mine speed
-            /*
-            for _ in 0..1000 {
-                let proof = get_proof(&self.rpc_client, signer.pubkey()).await;
-                let (next_hash, nonce) = self.find_next_hash_par(&self.signer_by_number(1), proof.hash.into(), treasury.difficulty.into(), threads as usize);
-                println!("Next Hash {}", next_hash.to_string());
-            } 
-            */
-
-            // Escape sequence that clears the screen and the scrollback buffer
             println!("\nMining for valid hashes...");
-            //let mut next_hashes: HashMap<u64, KeccakHash> = HashMap::new();
-            //let mut nonces: HashMap<u64, u64> = HashMap::new();
-
             let mut all_pubkey = vec![];
             let mut proofs = vec![];
-            for wallet in 1..WALLETS+1 {
-                let proof = get_proof(&self.rpc_client, self.signer_by_number(wallet).pubkey()).await;
-                //println!("Proof Hash {} : {}", wallet, proof.hash.to_string());
+            for w in 0..self.wallets.len() {
+                let proof = get_proof(&self.rpc_client, self.wallets[w].pubkey()).await;
                 let rewards = (proof.claimable_rewards as f64) / (10f64.powf(ore::TOKEN_DECIMALS as f64));
-                println!("Wallet {} claimable rewards: {} ORE", wallet, rewards);
+                println!("Wallet {} claimable rewards: {} ORE", w, rewards);
                 
                 //let (next_hash, nonce) = self.find_next_hash_par(&self.signer_by_number(wallet), proof.hash.into(), treasury.difficulty.into(), threads);
                 
-                all_pubkey.push(self.signer_by_number(wallet).pubkey().clone());
+                all_pubkey.push(self.wallets[w].pubkey().clone());
                 proofs.push(proof);
             }
 
@@ -166,95 +121,34 @@ impl Miner {
                 .map(|(signer, proof)| (solana_sdk::keccak::Hash::new_from_array(proof.hash.0), *signer))
                 .collect::<Vec<_>>();
 
-            //opencl test
-            //let (next_hash_cl, nonce_cl) = self.find_next_hash_par_with_opencl(hash_and_pubkey[0].0, treasury.difficulty.into(), hash_and_pubkey[0].1, 64).await;
-            //println!("opencl test {} {}", next_hash_cl.to_string(), nonce_cl);
-            //opencl test
+            
+            if self.use_gpu {
+                // Check if the sync file exists
 
-            let file_path = "sync_file.txt";
-            // Check if the sync file exists
-            while fs::metadata(file_path).is_ok() {
                 println!("Waiting on GPU to be free...");
-                std::thread::sleep(Duration::from_millis(10000));
-            }
-            
-            let mut file = File::create(file_path);
-
-            let start_time = Instant::now();
-            println!("Mining initial {} hashes started...", hash_and_pubkey.len());
-            let mut mining_result = self.find_next_hash_par_gpu(&treasury.difficulty.into(), &hash_and_pubkey, 0).await;
-            println!("Mining initial {} hashes took {} sec", hash_and_pubkey.len(), start_time.elapsed().as_millis()/1000);
-
-            println!("Checking all hashes are valid...");
-            for wallet in 1..WALLETS+1 {
-                //println!("{}, {}, {}, {}", treasury.difficulty.to_string(), proof.hash.to_string(), self.signer_by_number(wallet).pubkey().to_string(), hash_and_pubkey.len());
-                let result_idx: usize = (wallet-1) as usize;
-                let mut lastproof = mining_result[result_idx].2;
-                let currentproof = get_proof(&self.rpc_client, self.signer_by_number(wallet).pubkey()).await;
-                loop {
-                    if lastproof == currentproof.hash.into() {
-                        break;
-                    }
-                    
-                    println!("Proof changed for wallet {}, re-mining...", wallet);
-                    let hash_and_pubkey = [(solana_sdk::keccak::Hash::new_from_array(currentproof.hash.0), self.signer_by_number(wallet).pubkey().clone())];
-                    let result = self.find_next_hash_par_gpu(&treasury.difficulty.into(), &hash_and_pubkey, 0).await;
-                    //proof = get_proof(&self.rpc_client, self.signer_by_number(wallet).pubkey()).await;
-                    let valid_result = self.validate_hash(
-                        result[0].0,
-                        currentproof.hash.into(),
-                        self.signer_by_number(wallet).pubkey().clone(),
-                        result[0].1,
-                        treasury.difficulty.into(),
-                    );
-
-                    //println!("Validated with params {}, {}, {}, {}, {}", result[0].0, result[0].1, result[0].2, self.signer_by_number(wallet).pubkey(), treasury.difficulty);
-
-                    lastproof = currentproof.hash.into();
-
-                    if valid_result {
-                        mining_result[result_idx] = result[0];
-                        break; 
-                    }
+                while fs::metadata(sync_file_path).is_ok() {
+                    print!(".");
+                    std::thread::sleep(Duration::from_millis(500));
                 }
-
-                //println!("Next Hash {} : {}", result.0, result.1);
-                //next_hashes.insert(wallet, result.0);
-                //nonces.insert(wallet, result.1);
-                
-                //next_hashes.insert(wallet, next_hash);
-                //nonces.insert(wallet, nonce);
+            
+                let mut _file = File::create(sync_file_path);
             }
 
-            // Remove the file
-            fs::remove_file(file_path);
-
-            /*
-            let hash_and_pubkey = all_pubkey
-                .iter()
-                .zip(proofs.iter())
-                .map(|(signer, proof)| (solana_sdk::keccak::Hash::new_from_array(proof.hash.0), *signer))
-                .collect::<Vec<_>>();
-            */
+            let start_mine_time = Instant::now();
+            println!("Mining initial {} hashes started...", hash_and_pubkey.len());
+           
+            let mut mining_result = self.find_next_hash_decider(&mining_difficulty.into(), &hash_and_pubkey, self.threads).await;
+            println!("Mining initial {} hashes took {} sec", hash_and_pubkey.len(), start_mine_time.elapsed().as_millis()/1000);
             
-            //println!("{}, {}, {}, {}", treasury.difficulty.to_string(), proof.hash.to_string(), self.signer_by_number(wallet).pubkey().to_string(), hash_and_pubkey.len());
-            //let start_time = Instant::now();
-            
-            //if (self.use_gpu) {
-                //let mining_result = self.find_next_hash_par_gpu(&treasury.difficulty.into(), &hash_and_pubkey, 0).await;
-            //}
-            //else {
-                //for wallet in 1..WALLETS+1 {
-                    //let (next_hash, nonce) = self.find_next_hash_par(&self.signer_by_number(wallet), proof.hash.into(), treasury.difficulty.into(), threads);
-                   //}
-            //}
+            println!("Checking all hashes are valid...");
+            self.validate_hashes(&mining_difficulty.into(), &mut mining_result, test_mode).await;
 
-            let this_mine_time = start_time.elapsed().as_millis();
-            println!("This hash mining time: {} sec", this_mine_time/1000);
-            if total_times_mined > 0 {
-                println!("Avg hash mining time: {} sec", total_mining_mills/total_times_mined/1000);
+            if self.use_gpu {
+                // Remove the sync file
+                let _ = fs::remove_file(sync_file_path);
             }
-            //std::thread::sleep(Duration::from_millis(3000));
+
+            stats.record_mine(start_mine_time);
 
             // Submit mine tx.
             // Use busses randomly so on each epoch, transactions don't pile on the same busses
@@ -265,25 +159,24 @@ impl Miner {
 
                 //println!("Validating Hashes...");
                 // Double check we're submitting for the right challenge
-                for wallet in 1..WALLETS+1 {
+                for w in 0..self.wallets.len() {
                     //println!("\nChecking hash already validated for wallet {}...", wallet);
-                    let proof_ = get_proof(&self.rpc_client, self.signer_by_number(wallet).pubkey()).await;
-                    let result_idx: usize = (wallet-1) as usize;
+                    let proof_ = get_proof(&self.rpc_client, self.wallets[w].pubkey()).await;
                     
                     //println!("Validaing with params {}, {}, {}, {}, {}", mining_result[result_idx].0, mining_result[result_idx].1, proof_.hash, self.signer_by_number(wallet).pubkey(), treasury.difficulty);
                     
-                    if mining_result[result_idx].2 != proof_.hash.into() {
-                        println!("Hash already validated for wallet {}", wallet);
+                    if mining_result[w].2 != proof_.hash.into() {
+                        println!("Hash invalid for wallet {}", w);
                     }
 
                     if !self.validate_hash(
-                        mining_result[result_idx].0,
+                        mining_result[w].0,
                         proof_.hash.into(),
-                        self.signer_by_number(wallet).pubkey(),
-                        mining_result[result_idx].1,
-                        treasury.difficulty.into(),
+                        self.wallets[w].pubkey(),
+                        mining_result[w].1,
+                        mining_difficulty.into(),
                     ) {
-                        println!("Hash already validated for wallet {}", wallet);
+                        println!("Hash invalid for wallet {}", w);
                         break 'submit;
                     }
                 }
@@ -299,28 +192,6 @@ impl Miner {
                     }
                     std::thread::sleep(Duration::from_millis(1000));
                 }
-                let epoch_threshold = treasury.last_reset_at.saturating_add(EPOCH_DURATION) as u64;
-
-                /*
-                let treasury = get_treasury(&self.rpc_client).await;
-                //println!("Calling getaccount for clock");
-                let clock = get_clock_account(&self.rpc_client).await;
-                let threshold = treasury.last_reset_at.saturating_add(EPOCH_DURATION);
-                if clock.unix_timestamp.ge(&threshold) {
-                    // There are a lot of miners right now, so randomly select into submitting tx
-                    if rng.gen_range(0..RESET_ODDS).eq(&0) {
-                        println!("\nSending epoch reset transaction...");
-                        let cu_limit_ix =
-                            ComputeBudgetInstruction::set_compute_unit_limit(CU_LIMIT_RESET);
-                        let cu_price_ix =
-                            ComputeBudgetInstruction::set_compute_unit_price(priority_fee);
-                        let reset_ix = ore::instruction::reset(signer.pubkey());
-                        self.send_and_confirm(&[cu_limit_ix, cu_price_ix, reset_ix], false, true, vec![&signer])
-                            .await
-                            .ok();
-                    }
-                }
-                */
 
                 // Submit request.
                 let bus = self.find_bus_id(treasury.reward_rate).await;
@@ -333,28 +204,29 @@ impl Miner {
                 let mut mine_ixs: Vec<Instruction> = Vec::new();
                 mine_ixs.push(cu_limit_ix);
                 mine_ixs.push(cu_price_ix);
-                for wallet in 1..WALLETS+1 {
-                    let result_idx: usize = (wallet-1) as usize;    
+                for w in 0..self.wallets.len() {
                     let ix_mine = ore::instruction::mine(
-                        self.signer_by_number(wallet).pubkey(),
+                        self.wallets[w].pubkey(),
                         BUS_ADDRESSES[bus.id as usize],
-                        mining_result[result_idx].0.into(),
-                        mining_result[result_idx].1,
+                        mining_result[w].0.into(),
+                        mining_result[w].1,
                         //(*next_hashes.get(&wallet).unwrap()).into(),
                         //*nonces.get(&wallet).unwrap(),
                     );
                     mine_ixs.push(ix_mine);
                     //println!("Added mine txn for wallet {}", wallet);
                 }
+                
+                if test_mode {
+                    println!("{} Txn success.. (but not really, just testing)", chrono::offset::Local::now());
+                    std::thread::sleep(Duration::from_millis(1000));
+                    stats.record_submit(start_time_submit);
+                    break;
+                }
 
-                //this is ugly but keypair doesn't implement clone() :(
-                let signer1 = self.signer_by_number(1);
-                let signer2 = self.signer_by_number(2);
-                let signer3 = self.signer_by_number(3);
-                let signer4 = self.signer_by_number(4);
-                let signer5 = self.signer_by_number(5);
+                let epoch_threshold = treasury.last_reset_at.saturating_add(EPOCH_DURATION) as u64;
 
-                let signers = vec![&signer1, &signer2, &signer3, &signer4, &signer5];
+                let signers: Vec<&Keypair> = self.wallets.iter().collect();
 
                 match self
                     .send_and_confirm(&mine_ixs.into_boxed_slice(), false, false, signers, epoch_threshold)
@@ -362,13 +234,7 @@ impl Miner {
                 {
                     Ok(sig) => {
                         println!("{} Txn success: {}", chrono::offset::Local::now(), sig);
-
-                        last_submit_time = start_time_submit.elapsed().as_millis();
-                        total_submit_mills += last_submit_time;
-
-                        total_times_mined += 1;
-                        total_mining_mills += this_mine_time;
-
+                        stats.record_submit(start_time_submit);
                         break;
                     }
                     Err(err) => {
@@ -379,18 +245,85 @@ impl Miner {
                             std::thread::sleep(Duration::from_millis(5000));
                         }
                         else if err.to_string().contains("Epoch reset") {
-                            //std::thread::sleep(Duration::from_millis(1000));
+                            self.wait_for_next_epoch().await;
                         }
                         else if err.to_string().contains("This transaction has already been processed") {
-                            last_submit_time = start_time_submit.elapsed().as_millis();
-                            total_submit_mills += last_submit_time;
-
-                            total_times_mined += 1;
-                            total_mining_mills += this_mine_time;
+                            stats.record_submit(start_time_submit);    
                         }
                     }
                 }
             }
+        }
+    }
+
+    async fn validate_hashes(&self, mining_difficulty:&solana_sdk::keccak::Hash, mining_result: &mut Vec<(KeccakHash, u64, KeccakHash)>, test_mode: bool) {
+        for w in 0..self.wallets.len() {
+            //println!("{}, {}, {}, {}", test_difficulty.to_string(), lastproof.to_string(), self.wallets[w].pubkey().to_string(), hash_and_pubkey.len());
+            let mut lastproof = mining_result[w].2;
+            loop {
+                let mut currentproof: KeccakHash = lastproof;
+                if !test_mode {
+                    currentproof = get_proof(&self.rpc_client, self.wallets[w].pubkey()).await.hash.into();
+                }
+                if lastproof == currentproof {
+                    break;
+                }
+                println!("Proofs don't match for {}: {}, {}", w, lastproof, currentproof);
+                std::thread::sleep(Duration::from_millis(2000));
+                    
+                println!("Proof changed for wallet {}, re-mining...", w);
+                let test_hash_and_pubkey = [(currentproof, self.wallets[w].pubkey().clone())];
+
+                let result = self.find_next_hash_decider(mining_difficulty, &test_hash_and_pubkey, self.threads).await;
+
+                let valid_result = self.validate_hash(
+                    result[0].0,
+                    currentproof,
+                    self.wallets[w].pubkey().clone(),
+                    result[0].1,
+                    *mining_difficulty,
+                );
+
+                if valid_result {
+                    lastproof = currentproof;
+                    println!("Validated with params {}, {}, {}, {}, {}", result[0].0, result[0].1, result[0].2, self.wallets[w].pubkey(), mining_difficulty);
+                    mining_result[w] = result[0];
+                }
+                else {
+                    //???
+                }
+            }
+            //println!("Next Hash {} : {}", result.0, result.1);
+        }    
+    }
+
+    fn get_next_difficulty(&self, start_array: [u8; 32], direction: i8) -> [u8; 32] {
+        let mut diff_array = start_array;
+        for x in 0..start_array.len() {
+            if diff_array[x] != 0 {
+                //less is more
+                if direction > 0 {
+                    diff_array[x] = diff_array[x].saturating_sub(8);
+                }
+                else {
+                    diff_array[x] = diff_array[x].saturating_add(8);
+                }
+                break;
+            }
+        }
+        diff_array
+    }
+
+    async fn find_next_hash_decider(&self, 
+        difficulty: &solana_sdk::keccak::Hash,
+        hash_and_pubkey: &[(solana_sdk::keccak::Hash, Pubkey)],
+        threads: u64    
+    ) -> Vec<(KeccakHash, u64, KeccakHash)> {
+        if self.use_gpu {
+            self.find_next_hash_par_gpu(difficulty, hash_and_pubkey, threads).await
+        }
+        else {
+            self.find_next_hash_cpu(difficulty, hash_and_pubkey, threads)
         }
     }
 
@@ -426,60 +359,72 @@ impl Miner {
         (next_hash, nonce)
     }
 
-    fn _find_next_hash_par(
+    fn find_next_hash_cpu(
         &self,
-        signer: &Keypair,
-        hash: KeccakHash,
-        difficulty: KeccakHash,
+        difficulty: &KeccakHash,
+        hash_and_pubkey: &[(solana_sdk::keccak::Hash, Pubkey)],
         threads: u64,
-    ) -> (KeccakHash, u64) {
-        let found_solution = Arc::new(AtomicBool::new(false));
-        let solution = Arc::new(Mutex::new((KeccakHash::new_from_array([0; 32]), 0)));
-        let pubkey = signer.pubkey();
+    ) -> Vec<(KeccakHash, u64, KeccakHash)> {
+        let mut results = vec![];
         let work_per_thread = u64::MAX / threads;
     
-        thread::scope(|s| {
-            for t in 0..threads {
-                let found_solution = Arc::clone(&found_solution);
-                let solution = Arc::clone(&solution);
-                let start_nonce = t * work_per_thread;
-                let end_nonce = start_nonce + work_per_thread;
-                s.spawn(move |_| {
-                    for nonce in start_nonce..end_nonce {
-                        if nonce % 100_000 == 0 && found_solution.load(Ordering::Relaxed) {
-                            break;
+        for (hash, pubkey) in hash_and_pubkey {
+            let (tx, rx) = channel::unbounded();
+            let found_solution = Arc::new(AtomicBool::new(false));
+            let solution = Arc::new(Mutex::new((KeccakHash::new_from_array([0; 32]), 0, KeccakHash::new_from_array([0; 32]))));
+            thread::scope(|s| {
+                for t in 0..threads {
+                    let tx = tx.clone();
+                    let found_solution = Arc::clone(&found_solution);
+                    let solution = Arc::clone(&solution);
+                    let start_nonce = t * work_per_thread;
+                    let end_nonce = start_nonce + work_per_thread;
+                    s.spawn(move |_| {
+                        for nonce in start_nonce..end_nonce {
+                            if nonce % 100_000 == 0 && found_solution.load(Ordering::Relaxed) {
+                                tx.send(()).unwrap(); 
+                                break;
+                            }
+                            let next_hash = hashv(&[
+                                hash.as_ref(),
+                                pubkey.as_ref(),
+                                nonce.to_le_bytes().as_ref(),
+                            ]);
+                            if next_hash <= *difficulty {
+                                found_solution.store(true, Ordering::Relaxed);
+                                let mut sol = solution.lock().unwrap();
+                                *sol = (next_hash, nonce, hash.clone());
+                                tx.send(()).unwrap(); // Notify completion if found
+                                break;
+                            }
                         }
-                        let next_hash = hashv(&[
-                            hash.as_ref(),
-                            pubkey.as_ref(),
-                            nonce.to_le_bytes().as_ref(),
-                        ]);
-                        if next_hash <= difficulty {
-                            found_solution.store(true, Ordering::Relaxed);
-                            let mut sol = solution.lock().unwrap();
-                            *sol = (next_hash, nonce);
-                            break;
-                        }
-                    }
-                });
+                        tx.send(()).unwrap(); // Notify completion if not found
+                    });
+                }
+            }).unwrap();
+            
+            for _ in 0..threads {
+                rx.recv().unwrap(); // Wait for threads to complete
             }
-        }).unwrap();
-    
-        let r_solution = solution.lock().expect("Failed to get lock");
-        *r_solution
+            
+            let r_solution = solution.lock().expect("Failed to get lock");
+            results.push(r_solution.clone());
+        }
+
+        results
     }
 
     async fn  find_next_hash_par_gpu(
         &self,
-        difficulty: &solana_sdk::keccak::Hash,
-        hash_and_pubkey: &[(solana_sdk::keccak::Hash, Pubkey)],
-        threads: usize
+        difficulty: &KeccakHash,
+        hash_and_pubkey: &[(KeccakHash, Pubkey)],
+        threads: u64
     ) -> Vec<(KeccakHash, u64, KeccakHash)> {
         let mut child = tokio::process::Command::new(env::current_exe().unwrap().parent().unwrap().join("gpu-worker"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
-        .expect("worker failed to spawn");
+        .expect("Worker failed to spawn... check gpu-worker.exe exists in target\\release path");
  
         if let Some(mut stdin) = child.stdin.take() {
             let mut data_to_send = Vec::new();
@@ -493,112 +438,34 @@ impl Miner {
                 data_to_send.extend_from_slice(pubkey.as_ref());
             }
  
-            // Optionally prepend the number of threads or any other control data
-            // Here, we send the number of threads as the first byte, if required by your application
             let mut final_data = Vec::new();
-            final_data.push(threads as u8);
+            final_data.push(0 as u8);
             final_data.extend_from_slice(&data_to_send);
  
             // Write all bytes in one go
             stdin.write_all(&final_data).await.unwrap();
- 
             // Dropping stdin to close it, signaling the end of input
             drop(stdin);
         }
 
         let output = child.wait_with_output().await.unwrap().stdout;
+
         let mut results = vec![];
-        //println!("output {:?}", output);
         let mut outidx = 0;
         let chunks = output.chunks(40);
         for chunk in chunks {
             if chunk.len() < 40 {
-                //println!("Incomplete data chunk received, length: {}", chunk.len());
                 continue;  // Skip this chunk or handle it according to your needs
             }
             let proof = hash_and_pubkey[outidx].0.into();
             let hash = solana_sdk::keccak::Hash(chunk[..32].try_into().unwrap());
             let nonce = u64::from_le_bytes(chunk[32..40].try_into().unwrap());
-           // println!("hash {:?}", hash);
-            //println!("nonce {:?}", nonce);
             results.push((hash, nonce, proof));
             outidx += 1;
         }
-        //println!("{:?}", results);
   
         results
-            /*
-            .cloned()
-            .ok_or_else(|| "No valid results were found".to_string())
-            .expect("REASON")
-            */
     }
-
-    /*
-    async fn find_next_hash_par_with_opencl(
-        &self,
-        hash: KeccakHash,
-        difficulty: KeccakHash,
-        pubkey: Pubkey,
-        threads: u64,
-    ) -> (KeccakHash, u64) {
-        // Create OpenCL program queue
-        let pro_que = ocl::ProQue::builder()
-            .src(include_str!("ore.cl"))
-            .dims(1 as usize) // Set the number of work-items (threads)
-            .build()
-            .unwrap();
-
-        // Create buffers for input and output data
-        let current_hash_buffer = Buffer::<u8>::builder()
-            .queue(pro_que.queue().clone())
-            .len(HASH_BYTES)
-            .build()
-            .unwrap();
-        let pubkey_buffer = Buffer::<u8>::builder()
-            .queue(pro_que.queue().clone())
-            .len(PUBKEY_BYTES)
-            .build()
-            .unwrap();
-
-        let solution_nonce = Buffer::<u64>::builder().queue(pro_que.queue().clone()).len(threads as usize).build().unwrap();
-        let solution_hash = Buffer::<u8>::builder().queue(pro_que.queue().clone()).len(threads as usize * HASH_BYTES).build().unwrap();
-
-        current_hash_buffer.cmd().write(&hash.to_bytes()[..]).enq().unwrap();
-        pubkey_buffer.cmd().write(&pubkey.to_bytes()[..]).enq().unwrap();
-
-        let difficulty_value = u32::from_le_bytes(difficulty.to_bytes()[..4].try_into().unwrap());
-        let work_per_thread = (u64::MAX / threads) as u64;
-
-        // Create kernel
-        let kernel = Kernel::builder()
-            .program(&pro_que.program())
-            .name("calculate_hashes")
-            .queue(pro_que.queue().clone())
-            .global_work_size((threads as usize, 1, 1))
-            .arg(&current_hash_buffer)
-            .arg(&pubkey_buffer)
-            .arg(&solution_nonce)
-            .arg(&solution_hash)
-            .arg(difficulty_value) // Difficulty
-            .arg(work_per_thread)
-            .build().unwrap();
-
-        // Execute kernel
-        unsafe {
-            kernel.enq().unwrap();
-        }
-
-        // Retrieve result from GPU
-        let mut nonce_result = vec![0u64; threads as usize];
-        solution_nonce.read(&mut nonce_result).enq().unwrap();
-        let mut hash_result = vec![0u8; threads as usize * HASH_BYTES];
-        solution_hash.read(&mut hash_result).enq().unwrap();
-
-        let hash_out = hash_result.into_boxed_slice();
-        (solana_sdk::keccak::Hash( (*hash_out).try_into().unwrap()), nonce_result[0])
-    }
-    */
 
     pub fn validate_hash(
         &self,
@@ -633,10 +500,8 @@ impl Miner {
     pub async fn _get_ore_display_balance(&self, signer_number: u64) -> String {
         let client = self.rpc_client.clone();
         
-        let signer = self.signer_by_number(signer_number);
-
         let token_account_address = spl_associated_token_account::get_associated_token_address(
-            &signer.pubkey(),
+            &self.wallets[0].pubkey(),
             &ore::MINT_ADDRESS,
         );
 

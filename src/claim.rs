@@ -10,15 +10,14 @@ use solana_sdk::{
 use crate::{cu_limits::CU_LIMIT_CLAIM, utils::proof_pubkey, utils::get_proof, Miner};
 
 impl Miner {
-    pub async fn claim(&self, beneficiary: Option<String>, amount: Option<f64>) {
+    pub async fn claim_all(&self, beneficiary: Option<String>, amount: Option<f64>) {
         
-        let signer1 = self.signer_by_number(1);
         let client = self.rpc_client.clone();
         let beneficiary = match beneficiary {
             Some(beneficiary) => {
                 Pubkey::from_str(&beneficiary).expect("Failed to parse beneficiary address")
             }
-            None => self.initialize_ata(&signer1).await,
+            None => self.initialize_ata(&self.wallets[0]).await,
         };
 
         let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(CU_LIMIT_CLAIM);
@@ -29,11 +28,10 @@ impl Miner {
         
         let mut has_ore_rewards = false;
         let mut total_rewards_amount = 0;
-        let mut signerws = vec![1];
+        let mut signerwallets = vec![];
 
-        for w in 1 .. 6 {
-            let signer = self.signer_by_number(w);
-            let pubkey = signer.pubkey();    
+        for w in 0..self.wallets.len() {
+            let pubkey = self.wallets[w].pubkey();
             let proof = get_proof(&self.rpc_client, pubkey).await;
             let rewardtotal = (proof.claimable_rewards as f64) / 10f64.powf(ore::TOKEN_DECIMALS as f64);
             if rewardtotal == 0.0 {
@@ -59,8 +57,8 @@ impl Miner {
                 total_rewards_amount += amount;
                 let ix = ore::instruction::claim(pubkey, beneficiary, amount);
                 claim_ixs.push(ix);
-                if w > 1 {
-                    signerws.push(w);
+                if w > 0 {
+                    signerwallets.push(&self.wallets[w]);
                 }
             }
         }
@@ -69,18 +67,8 @@ impl Miner {
 
         if has_ore_rewards {
             println!("Submitting claim transaction...");
-            let signer2 = self.signer_by_number(2);
-            let signer3 = self.signer_by_number(3);
-            let signer4 = self.signer_by_number(4);
-            let signer5 = self.signer_by_number(5);            
-            
-            let mut signers = vec![&signer1];
-            for w in 0..signerws.len() {
-                if signerws[w] == 2 { signers.push(&signer2); }
-                if signerws[w] == 3 { signers.push(&signer3); }
-                if signerws[w] == 4 { signers.push(&signer4); }
-                if signerws[w] == 5 { signers.push(&signer5); }
-            }
+            let mut signers = vec![&self.wallets[0]];
+            signers.extend(signerwallets);
 
             match self
                 .send_and_confirm(&claim_ixs.into_boxed_slice(), false, false, signers, 0)

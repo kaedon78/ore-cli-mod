@@ -5,8 +5,11 @@ use solana_sdk::{
 use crate::{utils::proof_pubkey, Miner};
 
 impl Miner {
-    pub async fn register_by_number(&self, keypair_number: u64) {
-        self.register(&self.signer_by_number(keypair_number)).await
+    pub async fn register_all(&self) {
+        for wallet in self.wallets.iter() {
+            self.register(wallet).await
+        }
+        println!("Registration OK...");    
     }
 
     pub async fn register(&self, signer: &Keypair) {
@@ -15,7 +18,7 @@ impl Miner {
         let pubkey = signer.pubkey();
         let proof_address = proof_pubkey(pubkey);
         if client.get_account(&proof_address).await.is_ok() {
-            println!("Registration OK...");    
+            //println!("Registration OK...");    
             return;
         }
 

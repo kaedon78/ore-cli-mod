@@ -2459,11 +2459,12 @@ checksum = "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf"
 
 [[package]]
 name = "ore-cli-mod"
-version = "0.4.9"
+version = "0.4.12"
 dependencies = [
  "bincode",
  "bs58 0.5.1",
  "cached",
+ "cfg-if",
  "chrono",
  "clap 4.5.4",
  "crossbeam",
@@ -2471,11 +2472,14 @@ dependencies = [
  "log",
  "num-traits",
  "ore-program",
+ "orz-program",
  "rand 0.8.5",
  "sha256",
+ "solana-account-decoder",
  "solana-cli-config",
  "solana-client",
  "solana-program",
+ "solana-rpc-client-api",
  "solana-sdk",
  "solana-transaction-status",
  "spl-associated-token-account",
@@ -2486,9 +2490,27 @@ dependencies = [
 
 [[package]]
 name = "ore-program"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcf2aafa6b257df0f423042e69eb7dd5dbc90a03f2469b986b14401dc6570246"
+dependencies = [
+ "bs58 0.5.1",
+ "bytemuck",
+ "mpl-token-metadata",
+ "num_enum 0.7.2",
+ "shank",
+ "solana-program",
+ "spl-associated-token-account",
+ "spl-token",
+ "static_assertions",
+ "thiserror",
+]
+
+[[package]]
+name = "orz-program"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1438154357d3952bd1d8f683d7ded7977a317b86495031313a6a8799afe2ec8"
+checksum = "34feaa67d771c20d2a045d971e0fd5ec50c21da8b3485426a41a845c160fde79"
 dependencies = [
  "bs58 0.5.1",
  "bytemuck",

@@ -1,8 +1,16 @@
+#[cfg(feature = "ore")]
+use ore::{self, MINT_ADDRESS};
+#[cfg(feature = "orz")]
+use orz::{self, MINT_ADDRESS};
+
 use solana_sdk::{
     signature::Signer,
     signer::keypair::Keypair
 };
-use crate::Miner;
+use crate::{
+    constants::TOKEN_NAME,
+    Miner
+};
 
 impl Miner {
     pub async fn all_balances(&self) {
@@ -16,12 +24,12 @@ impl Miner {
         let client = self.rpc_client.clone();
         let token_account_address = spl_associated_token_account::get_associated_token_address(
             &address,
-            &ore::MINT_ADDRESS,
+            &MINT_ADDRESS,
         );
         match client.get_token_account(&token_account_address).await {
             Ok(token_account) => {
                 if let Some(token_account) = token_account {
-                    println!("{:} ORE", token_account.token_amount.ui_amount_string);
+                    println!("{:} {}", token_account.token_amount.ui_amount_string, TOKEN_NAME);
                 } else {
                     println!("Account not found");
                 }

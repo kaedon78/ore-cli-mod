@@ -29,6 +29,7 @@ impl Miner {
         );
         let mut tx = Transaction::new_unsigned(msg.clone());
 
+        self.stats.borrow_mut().add_api_call("getlatestblockhash");
         let (hash, _slot) = client
             .get_latest_blockhash_with_commitment(self.rpc_client.commitment())
             .await

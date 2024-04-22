@@ -1,14 +1,11 @@
-use solana_client::{
-    nonblocking::rpc_client::RpcClient,
-};
+use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_program::instruction::Instruction;
 use solana_sdk::{
-    commitment_config::{CommitmentConfig},
+    commitment_config::CommitmentConfig,
     signature::{Signature,Signer},
     transaction::Transaction,
 };
-
-pub const NONCE_RENT: u64 = 1_447_680;
+use crate::constants::NONCE_RENT;
 
 pub struct NonceManager {
     pub rpc_client: std::sync::Arc<RpcClient>,

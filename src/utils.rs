@@ -1,10 +1,9 @@
+#[cfg(feature = "ore")]
+use ore::{self, ID, state::{Proof, Treasury}, utils::AccountDeserialize, MINT_ADDRESS, PROOF, TREASURY_ADDRESS};
+#[cfg(feature = "orz")]
+use orz::{self, ID, state::{Proof, Treasury}, utils::AccountDeserialize, MINT_ADDRESS, PROOF, TREASURY_ADDRESS};
+
 use cached::proc_macro::cached;
-use ore::{
-    self,
-    state::{Proof, Treasury},
-    utils::AccountDeserialize,
-    MINT_ADDRESS, PROOF, TREASURY_ADDRESS,
-};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_program::{pubkey::Pubkey, sysvar};
 use solana_sdk::clock::Clock;
@@ -40,7 +39,7 @@ pub async fn get_clock_account(client: &RpcClient) -> Clock {
 
 #[cached]
 pub fn proof_pubkey(authority: Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&[PROOF, authority.as_ref()], &ore::ID).0
+    Pubkey::find_program_address(&[PROOF, authority.as_ref()], &ID).0
 }
 
 #[cached]

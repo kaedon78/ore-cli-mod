@@ -1,7 +1,7 @@
 mod balance;
 mod busses;
 mod claim;
-mod cu_limits;
+mod constants;
 #[cfg(feature = "admin")]
 mod initialize;
 mod mine;
@@ -18,7 +18,10 @@ mod update_admin;
 mod update_difficulty;
 mod utils;
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    cell::RefCell
+};
 
 use clap::{command, Parser, Subcommand};
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -26,21 +29,16 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     signature::{read_keypair_file, Keypair},
 };
-use sysinfo::{System};
-
-/*
-#[link(name = "keccakHash", kind = "static")]
-extern "C" {
-    fn keccakHash(input: *const u8, output: *mut u8, digestSize: u32);
-}
-*/
+use sysinfo::System;
+use stats::MinerStats;
 
 struct Miner {
     pub priority_fee: u64,
     pub rpc_client: Arc<RpcClient>,
     pub use_gpu: bool,
     pub wallets: Vec<Keypair>,
-    pub threads: u64
+    pub threads: u64,
+    pub stats: RefCell<MinerStats>
 }
 
 #[derive(Parser, Debug)]
@@ -119,7 +117,7 @@ struct Args {
         default_value = "0",
         global = true
     )]
-    use_gpu: u64,    
+    use_gpu: u64,
 
     #[arg(
         long,
@@ -284,13 +282,15 @@ async fn main() {
             threads += system.cpus().len() as u64;
         }
     }
+    let stats = RefCell::new(MinerStats::new());
     
     let miner = Arc::new(Miner::new(
         Arc::new(rpc_client),
         args.priority_fee,
         use_gpu,
         wallets,
-        threads
+        threads,
+        stats
     ));
 
     // Execute user command.
@@ -344,6 +344,7 @@ impl Miner {
         use_gpu: bool,
         wallets: Vec<Keypair>,
         threads: u64,
+        stats: RefCell<MinerStats>,
     ) -> Self {
         Self {
             rpc_client,
@@ -351,10 +352,7 @@ impl Miner {
             use_gpu,
             wallets,
             threads,
+            stats,
         }
     }
-
-    pub fn signer(&self) -> &Keypair {
-        &self.wallets[0]
-    }    
 }

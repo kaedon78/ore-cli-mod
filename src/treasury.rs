@@ -1,6 +1,11 @@
+#[cfg(feature = "ore")]
+use ore::{self, instruction, state::Treasury, EPOCH_DURATION, TOKEN_DECIMALS};
+#[cfg(feature = "orz")]
+use orz::{self, instruction, state::Treasury, EPOCH_DURATION, TOKEN_DECIMALS};
+
 use crate::{
-    cu_limits::{CU_LIMIT_RESET},
-    utils::{get_clock_account, get_treasury, treasury_tokens_pubkey},
+    constants::CU_LIMIT_RESET,
+    utils::{get_treasury, treasury_tokens_pubkey},
     Miner,
 };
 use solana_sdk::{
@@ -8,28 +13,22 @@ use solana_sdk::{
     signature::Signer,
     clock::Clock
 };
-use std::{
-    time::{Duration, SystemTime, UNIX_EPOCH},
+use std::time::{
+    Duration, SystemTime, UNIX_EPOCH
 };
-use ore::{self, state::Treasury, EPOCH_DURATION};
+
 use rand::Rng;
 use chrono::{DateTime, Local};
-
-/*
-use chrono::{Local};
-use chrono::prelude::DateTime;
-use std::{
-    time::{ Duration, UNIX_EPOCH},
-};
-*/
-const RESET_ODDS: u64 = 20;
+use crate::constants::RESET_ODDS;
 
 impl Miner {
     pub async fn treasury(&self) {
         let client = self.rpc_client.clone();
         //println!("Calling getaccount for treasury");
+        self.stats.borrow_mut().add_api_call("getaccountinfo");
         if let Ok(Some(treasury_tokens)) = client.get_token_account(&treasury_tokens_pubkey()).await
         {
+            self.stats.borrow_mut().add_api_call("getaccountinfo");
             let treasury = get_treasury(&self.rpc_client).await;
             let balance = treasury_tokens.token_amount.ui_amount_string;
             println!("{:} ORE", balance);
@@ -38,19 +37,17 @@ impl Miner {
             println!("Last reset at: {}", treasury.last_reset_at);
             println!(
                 "Reward rate: {} ORE",
-                (treasury.reward_rate as f64) / 10f64.powf(ore::TOKEN_DECIMALS as f64)
+                (treasury.reward_rate as f64) / 10f64.powf(TOKEN_DECIMALS as f64)
             );
             println!(
                 "Total claimed rewards: {} ORE",
-                (treasury.total_claimed_rewards as f64) / 10f64.powf(ore::TOKEN_DECIMALS as f64)
+                (treasury.total_claimed_rewards as f64) / 10f64.powf(TOKEN_DECIMALS as f64)
             );
         }
     }
 
-    pub async fn wait_for_next_epoch(&self) {
+    pub async fn wait_for_next_epoch(&self, mut treasury:&Treasury, clock:&Clock) {
         
-        let clock = get_clock_account(&self.rpc_client).await;    
-        let mut treasury = get_treasury(&self.rpc_client).await;
         let mut threshold = treasury.last_reset_at.saturating_add(EPOCH_DURATION);
         let mut epoch_valid = clock.unix_timestamp.lt(&threshold);
 
@@ -65,7 +62,8 @@ impl Miner {
         loop {
             //wait for epoch to become valid    
             //println!("Checking Epoch Reset...");
-            treasury = get_treasury(&self.rpc_client).await;
+            self.stats.borrow_mut().add_api_call("getaccountinfo");
+            let treasury = &get_treasury(&self.rpc_client).await;
             threshold = treasury.last_reset_at.saturating_add(EPOCH_DURATION);
             epoch_valid = clock.unix_timestamp.lt(&threshold);
             if epoch_valid {
@@ -101,7 +99,7 @@ impl Miner {
                     ComputeBudgetInstruction::set_compute_unit_limit(CU_LIMIT_RESET);
                 let cu_price_ix =
                     ComputeBudgetInstruction::set_compute_unit_price(1);
-                let reset_ix = ore::instruction::reset(self.wallets[0].pubkey());
+                let reset_ix = instruction::reset(self.wallets[0].pubkey());
                 self.send_and_confirm(&[cu_limit_ix, cu_price_ix, reset_ix], false, true, vec![&self.wallets[0]], 0)
                     .await
                     .ok();
@@ -130,6 +128,6 @@ impl Miner {
     }
 
     pub fn get_reward_rate(&self, treasury:&Treasury) -> f64 {
-        (treasury.reward_rate as f64) / (10f64.powf(ore::TOKEN_DECIMALS as f64))
+        (treasury.reward_rate as f64) / (10f64.powf(TOKEN_DECIMALS as f64))
     }
 }

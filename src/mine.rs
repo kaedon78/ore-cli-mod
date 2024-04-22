@@ -1,3 +1,8 @@
+#[cfg(feature = "ore")]
+use ore::{self, instruction, state::Bus, TOKEN_DECIMALS, MINT_ADDRESS, BUS_ADDRESSES, BUS_COUNT, EPOCH_DURATION};
+#[cfg(feature = "orz")]
+use orz::{self, instruction, state::Bus, TOKEN_DECIMALS, MINT_ADDRESS, BUS_ADDRESSES, BUS_COUNT, EPOCH_DURATION};
+
 use crossbeam::{
     thread,
     channel
@@ -5,14 +10,13 @@ use crossbeam::{
 use std::{
     io::{stdout, Write},
     sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
-    time::{Duration, UNIX_EPOCH},
+    time::Duration,
     env,
     time::Instant,
     fs, 
     fs::File
 };
 use rand::Rng;
-use ore::{self, state::Bus, BUS_ADDRESSES, BUS_COUNT, EPOCH_DURATION};
 use solana_program::{keccak::HASH_BYTES, program_memory::sol_memcmp, pubkey::Pubkey};
 use solana_sdk::{
     instruction::Instruction,
@@ -23,25 +27,21 @@ use solana_sdk::{
 };
 use tokio::io::AsyncWriteExt;
 use crate::{
-    cu_limits::{CU_LIMIT_MINE},
+    constants::{CU_LIMIT_MINE, TOKEN_NAME, GPU_SYNC_FILE},
     utils::{get_clock_account, get_proof, get_treasury},
     Miner,
-    stats::MinerStats,
 };
 
-use chrono::{Local};
-use chrono::prelude::DateTime;
-
-const sync_file_path: &str = "sync_file.txt";
-
 impl Miner {
-    pub async fn mine(&self) {
+    pub fn signer(&self) -> &Keypair {
+        &self.wallets[0]
+    }    
 
+    pub async fn mine(&self) {
         // Register, if needed.
         self.register_all().await;
 
         let mut stdout = stdout();
-        let mut stats = MinerStats::new();
         let mut test_mode = false;
         let mut test_diff_array: [u8;32] = [0, 0, 0, 16, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255];
 
@@ -50,12 +50,20 @@ impl Miner {
             // Escape sequence that clears the screen and the scrollback buffer    
             stdout.write_all(b"\x1b[2J\x1b[3J\x1b[H").ok();
 
-            if stats.last_submit_time > 0 {
-                println!("Last reward took {} seconds to land\n", stats.last_submit_time/1000);
-            }
+            {
+                let stats = self.stats.borrow_mut();
+                if stats.last_submit_time > 0 {
+                    println!("Last reward took {} seconds to land\n", stats.last_submit_time/1000);
+                }
+                stats.print_api_calls();
+            }            
 
             // Fetch account state
+            self.stats.borrow_mut().add_api_call("getaccountinfo");
             let treasury = get_treasury(&self.rpc_client).await;
+            self.stats.borrow_mut().add_api_call("getaccountinfo");
+            let clock = get_clock_account(&self.rpc_client).await;
+
             println!("Treasury difficulty: {}", treasury.difficulty.to_string());
             println!("Treasury last reset at: {}", self.get_last_reset_local(&treasury).format("%Y-%m-%d %H:%M:%S").to_string());
             println!("Treasury next reset at: {}", self.get_next_reset_local(&treasury).format("%Y-%m-%d %H:%M:%S").to_string());
@@ -67,47 +75,57 @@ impl Miner {
                 test_mode = true;
                 mining_difficulty = KeccakHash::new_from_array(test_diff_array).into();
 
-                if stats.total_times_submitted > 0 {
-                    let avg_mine_time_sec = stats.total_mining_mills / stats.total_times_submitted as u128 / 1000;
-                    if avg_mine_time_sec < 40 && stats.last_mine_time  < 50000 {
-                        test_diff_array = self.get_next_difficulty(test_diff_array, 1);
-                        mining_difficulty = KeccakHash::new_from_array(test_diff_array).into();
-                        //stats.reset_stats();
+                {
+                    let stats = self.stats.borrow_mut();
+                    if stats.total_times_submitted > 0 {
+                        let avg_mine_time_sec = stats.total_mining_mills / stats.total_times_submitted as u128 / 1000;
+                        if avg_mine_time_sec < 40 && stats.last_mine_time  < 50000 {
+                            test_diff_array = self.get_next_difficulty(test_diff_array, 1);
+                            mining_difficulty = KeccakHash::new_from_array(test_diff_array).into();
+                            //stats.reset_stats();
+                        }
+                        else if avg_mine_time_sec > 50 || stats.last_mine_time  > 60000 {
+                            test_diff_array = self.get_next_difficulty(test_diff_array, -1);
+                            mining_difficulty = KeccakHash::new_from_array(test_diff_array).into();
+                            //stats.reset_stats();
+                        }
                     }
-                    else if avg_mine_time_sec > 50 || stats.last_mine_time  > 60000 {
-                        test_diff_array = self.get_next_difficulty(test_diff_array, -1);
-                        mining_difficulty = KeccakHash::new_from_array(test_diff_array).into();
-                        //stats.reset_stats();
-                    }
-                }                
+                }
                 println!("Mining paused, using test difficulty: [{},{}] : {}", test_diff_array[3], test_diff_array[4], mining_difficulty.to_string());    
-            }
+            }            
 
             let reward_rate = self.get_reward_rate(&treasury);
             let priority_fee = self.priority_fee;
             
-            //println!("Main wallet balance: {} ORE", self.get_ore_display_balance(1).await);
+            //println!("Main wallet balance: {} {}", self.get_ore_display_balance(1).await, TOKEN_NAME);
 
             println!("Using priority fee: {} micro-lamports", priority_fee);
-            println!("Current reward rate: {} ORE", reward_rate);
+            println!("Current reward rate: {} {}", reward_rate, TOKEN_NAME);
 
-            stats.print_stats();
-           
-            stats.update_avg_reward_rate(reward_rate);
+            let mut wait_for_next_epoch = false;
+            /*
+            {
+                let mut stats = self.stats.borrow_mut();
+                stats.print_stats();
+                stats.update_avg_reward_rate(reward_rate);
+                wait_for_next_epoch = stats.is_reward_rate_above_avg(reward_rate)
+            }
+            */
 
             //if reward much less than average, wait for reset
-            if stats.is_reward_rate_above_avg(reward_rate) {
+            if wait_for_next_epoch {
                 println!("Current reward rate less than average, waiting for the next one...");    
-                self.wait_for_next_epoch().await;
+                self.wait_for_next_epoch(&treasury, &clock).await;
             }
 
             println!("\nMining for valid hashes...");
             let mut all_pubkey = vec![];
             let mut proofs = vec![];
             for w in 0..self.wallets.len() {
+                self.stats.borrow_mut().add_api_call("getaccountinfo");
                 let proof = get_proof(&self.rpc_client, self.wallets[w].pubkey()).await;
-                let rewards = (proof.claimable_rewards as f64) / (10f64.powf(ore::TOKEN_DECIMALS as f64));
-                println!("Wallet {} claimable rewards: {} ORE", w, rewards);
+                let rewards = (proof.claimable_rewards as f64) / (10f64.powf(TOKEN_DECIMALS as f64));
+                println!("Wallet {} claimable rewards: {} {}", w, rewards, TOKEN_NAME);
                 
                 //let (next_hash, nonce) = self.find_next_hash_par(&self.signer_by_number(wallet), proof.hash.into(), treasury.difficulty.into(), threads);
                 
@@ -126,12 +144,12 @@ impl Miner {
                 // Check if the sync file exists
 
                 println!("Waiting on GPU to be free...");
-                while fs::metadata(sync_file_path).is_ok() {
+                while fs::metadata(GPU_SYNC_FILE).is_ok() {
                     print!(".");
-                    std::thread::sleep(Duration::from_millis(500));
+                    std::thread::sleep(Duration::from_millis(250));
                 }
             
-                let mut _file = File::create(sync_file_path);
+                let mut _file = File::create(GPU_SYNC_FILE);
             }
 
             let start_mine_time = Instant::now();
@@ -145,22 +163,28 @@ impl Miner {
 
             if self.use_gpu {
                 // Remove the sync file
-                let _ = fs::remove_file(sync_file_path);
+                let _ = fs::remove_file(GPU_SYNC_FILE);
             }
 
-            stats.record_mine(start_mine_time);
+            {
+                self.stats.borrow_mut().record_mine(start_mine_time);
+            }
 
             // Submit mine tx.
             // Use busses randomly so on each epoch, transactions don't pile on the same busses
             //println!("\n\nSubmitting hash for validation...");
              let start_time_submit = Instant::now();                 
             'submit: loop {
-                let treasury = get_treasury(&self.rpc_client).await;
+                self.stats.borrow_mut().add_api_call("getaccountinfo");
+                let mut treasury = get_treasury(&self.rpc_client).await;
+                self.stats.borrow_mut().add_api_call("getaccountinfo");
+                let mut clock = get_clock_account(&self.rpc_client).await;
 
                 //println!("Validating Hashes...");
                 // Double check we're submitting for the right challenge
                 for w in 0..self.wallets.len() {
                     //println!("\nChecking hash already validated for wallet {}...", wallet);
+                    self.stats.borrow_mut().add_api_call("getaccountinfo");
                     let proof_ = get_proof(&self.rpc_client, self.wallets[w].pubkey()).await;
                     
                     //println!("Validaing with params {}, {}, {}, {}, {}", mining_result[result_idx].0, mining_result[result_idx].1, proof_.hash, self.signer_by_number(wallet).pubkey(), treasury.difficulty);
@@ -184,19 +208,22 @@ impl Miner {
                 // Reset epoch, if needed
                 loop {
                     //println!("Checking Epoch Reset...");
-                    let treasury = get_treasury(&self.rpc_client).await;
-                    let clock = get_clock_account(&self.rpc_client).await;
                     let epoch_valid = self.check_epoch_reset(&treasury, &clock).await;
                     if epoch_valid {
                         break;
                     }
+                    self.stats.borrow_mut().add_api_call("getaccountinfo");
+                    treasury = get_treasury(&self.rpc_client).await;
+                    self.stats.borrow_mut().add_api_call("getaccountinfo");
+                    clock = get_clock_account(&self.rpc_client).await;
+
                     std::thread::sleep(Duration::from_millis(1000));
                 }
 
                 // Submit request.
                 let bus = self.find_bus_id(treasury.reward_rate).await;
-                let bus_rewards = (bus.rewards as f64) / (10f64.powf(ore::TOKEN_DECIMALS as f64));
-                println!("\nSending on bus {} ({} ORE)", bus.id, bus_rewards);
+                let bus_rewards = (bus.rewards as f64) / (10f64.powf(TOKEN_DECIMALS as f64));
+                println!("\nSending on bus {} ({} {})", bus.id, bus_rewards, TOKEN_NAME);
                 let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(CU_LIMIT_MINE);
                 let cu_price_ix =
                     ComputeBudgetInstruction::set_compute_unit_price(priority_fee);
@@ -205,7 +232,7 @@ impl Miner {
                 mine_ixs.push(cu_limit_ix);
                 mine_ixs.push(cu_price_ix);
                 for w in 0..self.wallets.len() {
-                    let ix_mine = ore::instruction::mine(
+                    let ix_mine = instruction::mine(
                         self.wallets[w].pubkey(),
                         BUS_ADDRESSES[bus.id as usize],
                         mining_result[w].0.into(),
@@ -220,7 +247,7 @@ impl Miner {
                 if test_mode {
                     println!("{} Txn success.. (but not really, just testing)", chrono::offset::Local::now());
                     std::thread::sleep(Duration::from_millis(1000));
-                    stats.record_submit(start_time_submit);
+                    self.stats.borrow_mut().record_submit(start_time_submit);
                     break;
                 }
 
@@ -234,7 +261,7 @@ impl Miner {
                 {
                     Ok(sig) => {
                         println!("{} Txn success: {}", chrono::offset::Local::now(), sig);
-                        stats.record_submit(start_time_submit);
+                        self.stats.borrow_mut().record_submit(start_time_submit);
                         break;
                     }
                     Err(err) => {
@@ -245,10 +272,10 @@ impl Miner {
                             std::thread::sleep(Duration::from_millis(5000));
                         }
                         else if err.to_string().contains("Epoch reset") {
-                            self.wait_for_next_epoch().await;
+                            self.wait_for_next_epoch(&treasury, &clock).await;    
                         }
                         else if err.to_string().contains("This transaction has already been processed") {
-                            stats.record_submit(start_time_submit);    
+                            self.stats.borrow_mut().record_submit(start_time_submit);    
                         }
                     }
                 }
@@ -263,6 +290,7 @@ impl Miner {
             loop {
                 let mut currentproof: KeccakHash = lastproof;
                 if !test_mode {
+                    self.stats.borrow_mut().add_api_call("getaccountinfo");
                     currentproof = get_proof(&self.rpc_client, self.wallets[w].pubkey()).await.hash.into();
                 }
                 if lastproof == currentproof {
@@ -332,7 +360,8 @@ impl Miner {
         loop {
             let bus_id = rng.gen_range(0..BUS_COUNT);
             if let Ok(bus) = self.get_bus(bus_id).await {
-                if bus.rewards.gt(&reward_rate.saturating_mul(20)) {
+                //if bus.rewards.gt(&reward_rate.saturating_mul(20)) {
+                if bus.rewards.gt(&reward_rate.saturating_mul(0)) {
                     return bus;
                 }
             }
@@ -414,7 +443,7 @@ impl Miner {
         results
     }
 
-    async fn  find_next_hash_par_gpu(
+    async fn find_next_hash_par_gpu(
         &self,
         difficulty: &KeccakHash,
         hash_and_pubkey: &[(KeccakHash, Pubkey)],
@@ -502,9 +531,10 @@ impl Miner {
         
         let token_account_address = spl_associated_token_account::get_associated_token_address(
             &self.wallets[0].pubkey(),
-            &ore::MINT_ADDRESS,
+            &MINT_ADDRESS,
         );
-
+        
+        self.stats.borrow_mut().add_api_call("getaccountinfo");
         match client.get_token_account(&token_account_address).await {
             Ok(token_account) => {
                 if let Some(token_account) = token_account {

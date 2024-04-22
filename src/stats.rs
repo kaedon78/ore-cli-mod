@@ -1,8 +1,8 @@
 use std::{
     time::Instant,
+	collections::HashMap,
 };
-
-const TARGET_RATE_MULT: f64 = 0.875;
+use crate::constants::TOKEN_NAME;
 
 pub struct MinerStats {
 	pub reward_rate_total: f64,
@@ -13,7 +13,10 @@ pub struct MinerStats {
 	pub total_submit_mills: u128,
 	pub total_mining_mills: u128,
 	pub last_mine_time: u128,
+	pub api_calls: Vec<String>,
 }
+
+use crate::constants::TARGET_RATE_MULT;
 
 impl MinerStats {
     pub fn new() -> Self {
@@ -29,6 +32,7 @@ impl MinerStats {
 			
 			total_mining_mills: 0,
 			last_mine_time: 0,
+			api_calls: vec![],
         }
     }
 
@@ -37,7 +41,7 @@ impl MinerStats {
             println!("Avg hash mining time: {} sec", self.total_mining_mills / self.total_times_submitted as u128 / 1000);
         }
 		if self.total_times_submitted > 0 {
-			println!("Avg reward rate: {} ORE", self.reward_rate_total as f64 / self.reward_rate_count as f64);
+			println!("Avg reward rate: {} {}", self.reward_rate_total as f64 / self.reward_rate_count as f64, TOKEN_NAME);
 			println!("Total txns: {}", self.total_times_submitted);
 			println!("Avg time per txn: {} seconds", (self.total_submit_mills + self.total_mining_mills) / self.total_times_submitted as u128 / 1000);
 		}
@@ -76,5 +80,25 @@ impl MinerStats {
 		self.last_submit_time = 0;
 		self.total_mining_mills = 0;
 		self.last_mine_time = 0;
+		self.api_calls = vec![];
+	}
+
+	pub fn add_api_call(&mut self, method: &str) {
+		self.api_calls.push(method.into());
+	}
+
+	pub fn print_api_calls(&self) {
+		let mut counts = HashMap::new();
+
+		// Count occurrences of each value
+		for value in &self.api_calls {
+			*counts.entry(value).or_insert(0) += 1;
+		}
+
+		// Print the counts
+		for (value, count) in counts.iter() {
+			println!("RPC call \"{}\": Count {}", value, count);
+		}
+		println!("Total RPC credits - QN:{}: HEL:{}", self.api_calls.len()*50, self.api_calls.len()*10);
 	}
 }

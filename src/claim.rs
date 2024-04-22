@@ -1,5 +1,9 @@
+#[cfg(feature = "ore")]
+use ore::{self, MINT_ADDRESS, TOKEN_DECIMALS, instruction, state::Proof, utils::AccountDeserialize};
+#[cfg(feature = "orz")]
+use orz::{self, MINT_ADDRESS, TOKEN_DECIMALS, instruction, state::Proof, utils::AccountDeserialize};
+
 use std::str::FromStr;
-use ore::{self, state::Proof, utils::AccountDeserialize};
 use solana_program::pubkey::Pubkey;
 use solana_sdk::{
     instruction::Instruction,
@@ -7,7 +11,7 @@ use solana_sdk::{
     signature::Signer,
     signer::keypair::Keypair
 };
-use crate::{cu_limits::CU_LIMIT_CLAIM, utils::proof_pubkey, utils::get_proof, Miner};
+use crate::{constants::{CU_LIMIT_CLAIM, TOKEN_NAME}, utils::proof_pubkey, utils::get_proof, Miner};
 
 impl Miner {
     pub async fn claim_all(&self, beneficiary: Option<String>, amount: Option<f64>) {
@@ -32,17 +36,19 @@ impl Miner {
 
         for w in 0..self.wallets.len() {
             let pubkey = self.wallets[w].pubkey();
+            self.stats.borrow_mut().add_api_call("getaccountinfo");
             let proof = get_proof(&self.rpc_client, pubkey).await;
-            let rewardtotal = (proof.claimable_rewards as f64) / 10f64.powf(ore::TOKEN_DECIMALS as f64);
+            let rewardtotal = (proof.claimable_rewards as f64) / 10f64.powf(TOKEN_DECIMALS as f64);
             if rewardtotal == 0.0 {
                 println!("Nothing to claim for address {}", pubkey);
             }
             else {
                 has_ore_rewards = true;
-                println!("{} ORE to claim on address {}", rewardtotal, pubkey);
+                println!("{} {} to claim on address {}", rewardtotal, TOKEN_NAME, pubkey);
                 let amount = if let Some(amount) = amount {
-                    (amount * 10f64.powf(ore::TOKEN_DECIMALS as f64)) as u64
+                    (amount * 10f64.powf(TOKEN_DECIMALS as f64)) as u64
                 } else {
+                    self.stats.borrow_mut().add_api_call("getaccountinfo");
                     match client.get_account(&proof_pubkey(pubkey)).await {
                         Ok(proof_account) => {
                             let proof = Proof::try_from_bytes(&proof_account.data).unwrap();
@@ -55,7 +61,7 @@ impl Miner {
                     }
                 };
                 total_rewards_amount += amount;
-                let ix = ore::instruction::claim(pubkey, beneficiary, amount);
+                let ix = instruction::claim(pubkey, beneficiary, amount);
                 claim_ixs.push(ix);
                 if w > 0 {
                     signerwallets.push(&self.wallets[w]);
@@ -63,7 +69,7 @@ impl Miner {
             }
         }
 
-        let amountf = (total_rewards_amount as f64) / (10f64.powf(ore::TOKEN_DECIMALS as f64));
+        let amountf = (total_rewards_amount as f64) / (10f64.powf(TOKEN_DECIMALS as f64));
 
         if has_ore_rewards {
             println!("Submitting claim transaction...");
@@ -93,10 +99,11 @@ impl Miner {
         // Build instructions.
         let token_account_pubkey = spl_associated_token_account::get_associated_token_address(
             &pubkey,
-            &ore::MINT_ADDRESS,
+            &MINT_ADDRESS,
         );
 
         // Check if ata already exists
+        self.stats.borrow_mut().add_api_call("getaccountinfo");
         if let Ok(Some(_ata)) = client.get_token_account(&token_account_pubkey).await {
             return token_account_pubkey;
         }
@@ -105,7 +112,7 @@ impl Miner {
         let ix = spl_associated_token_account::instruction::create_associated_token_account(
             &pubkey,
             &pubkey,
-            &ore::MINT_ADDRESS,
+            &MINT_ADDRESS,
             &spl_token::id(),
         );
         println!("Creating token account {}...", token_account_pubkey);

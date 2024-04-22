@@ -5,7 +5,7 @@ use std::{
 use solana_client::{
     //nonblocking::rpc_client::RpcClient,
     client_error::{ClientError, ClientErrorKind, Result as ClientResult},
-    rpc_config::{RpcSendTransactionConfig},
+    rpc_config::RpcSendTransactionConfig,
 };
 use solana_program::instruction::Instruction;
 use solana_sdk::{
@@ -15,14 +15,10 @@ use solana_sdk::{
 };
 use solana_transaction_status::{TransactionConfirmationStatus, UiTransactionEncoding};
 
-use crate::Miner;
-
-const RPC_RETRIES: usize = 0;
-const GATEWAY_RETRIES: usize = 150;
-const CONFIRM_RETRIES: usize = 1;
-
-const CONFIRM_DELAY: u64 = 0;
-const GATEWAY_DELAY: u64 = 300;
+use crate::{
+    constants::{RPC_RETRIES, GATEWAY_RETRIES, CONFIRM_RETRIES, CONFIRM_DELAY, GATEWAY_DELAY},
+    Miner
+};
 
 impl Miner {
     pub async fn send_and_confirm(
@@ -39,6 +35,7 @@ impl Miner {
         
         // Return error if balance is zero
         /*
+        self.stats.borrow_mut().add_api_call("getbalance");
         let balance = client.get_balance(&signer.pubkey()).await.unwrap();
         if balance <= 0 {
             return Err(ClientError {
@@ -79,7 +76,8 @@ impl Miner {
                     });
                 }
             }
-
+            
+            self.stats.borrow_mut().add_api_call("sendtransaction");
             match client.send_transaction_with_config(&tx, send_cfg).await {
                 Ok(sig) => {
                     print!("{}", miningchars[attempts%3]);
@@ -89,6 +87,7 @@ impl Miner {
                         return Ok(sig);
                     }
                     for _ in 0..CONFIRM_RETRIES {
+                        self.stats.borrow_mut().add_api_call("getsignaturestatuses");
                         match client.get_signature_statuses(&[sig]).await {
                             Ok(signature_statuses) => {
                                 for signature_status in signature_statuses.value {

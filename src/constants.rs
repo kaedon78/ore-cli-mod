@@ -14,4 +14,4 @@ pub const RPC_RETRIES: usize = 0;
 pub const GATEWAY_RETRIES: usize = 150;
 pub const CONFIRM_RETRIES: usize = 1;
 pub const CONFIRM_DELAY: u64 = 0;
-pub const GATEWAY_DELAY: u64 = 300;
+pub const GATEWAY_DELAY: u64 = 600;

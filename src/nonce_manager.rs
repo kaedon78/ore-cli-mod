@@ -59,14 +59,14 @@ impl NonceManager {
         kp
     }
 
-    pub async fn maybe_create_ixs(&mut self, nonce: &solana_sdk::pubkey::Pubkey) -> Option<Vec<Instruction>> {
+    pub async fn maybe_create_ixs(&mut self, nonce_pubkey: &solana_sdk::pubkey::Pubkey) -> Option<Vec<Instruction>> {
         //println!("Calling getaccount for nonce");    
-        if solana_client::nonce_utils::nonblocking::get_account(&self.rpc_client, nonce).await.is_ok() {
+        if solana_client::nonce_utils::nonblocking::get_account(&self.rpc_client, nonce_pubkey).await.is_ok() {
             None
         } else {
             Some(solana_sdk::system_instruction::create_nonce_account(
                     &self.authority,
-                    &nonce,
+                    &nonce_pubkey,
                     &self.authority,
                     NONCE_RENT,
             ))

@@ -24,7 +24,8 @@ impl Miner {
             None => self.initialize_ata(&self.wallets[0]).await,
         };
 
-        let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(CU_LIMIT_CLAIM);
+        let cu_limit_amt = 1_000 + (CU_LIMIT_CLAIM * self.wallets.len() as u32);
+        let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(cu_limit_amt);
         let cu_price_ix = ComputeBudgetInstruction::set_compute_unit_price(self.priority_fee);
         let mut claim_ixs: Vec<Instruction> = Vec::new();
         claim_ixs.push(cu_limit_ix);
@@ -37,7 +38,17 @@ impl Miner {
         for w in 0..self.wallets.len() {
             let pubkey = self.wallets[w].pubkey();
             self.stats.borrow_mut().add_api_call("getaccountinfo");
-            let proof = get_proof(&self.rpc_client, pubkey).await;
+            let proof = match client.get_account(&proof_pubkey(pubkey)).await {
+                Ok(proof_account) => {
+                    let proof = Proof::try_from_bytes(&proof_account.data).unwrap().clone();
+                    proof
+                }
+                Err(err) => {
+                    println!("Error looking up claimable rewards: {:?}", err);
+                    return;
+                }
+            };
+
             let rewardtotal = (proof.claimable_rewards as f64) / 10f64.powf(TOKEN_DECIMALS as f64);
             if rewardtotal == 0.0 {
                 println!("Nothing to claim for address {}", pubkey);
@@ -45,25 +56,31 @@ impl Miner {
             else {
                 has_ore_rewards = true;
                 println!("{} {} to claim on address {}", rewardtotal, TOKEN_NAME, pubkey);
-                let amount = if let Some(amount) = amount {
-                    (amount * 10f64.powf(TOKEN_DECIMALS as f64)) as u64
-                } else {
-                    self.stats.borrow_mut().add_api_call("getaccountinfo");
-                    match client.get_account(&proof_pubkey(pubkey)).await {
-                        Ok(proof_account) => {
-                            let proof = Proof::try_from_bytes(&proof_account.data).unwrap();
-                            proof.claimable_rewards
-                        }
-                        Err(err) => {
-                            println!("Error looking up claimable rewards: {:?}", err);
-                            return;
-                        }
+                let amounttoclaim = if let Some(amount) = amount {
+                    //println!("Checking {} against {}", amount, proof.claimable_rewards);
+                    if (amount * 10f64.powf(TOKEN_DECIMALS as f64)) <= proof.claimable_rewards as f64 {
+                        (amount * 10f64.powf(TOKEN_DECIMALS as f64)) as u64
                     }
+                    else {
+                        0
+                    }
+                } else {
+                    proof.claimable_rewards
                 };
-                total_rewards_amount += amount;
-                let ix = instruction::claim(pubkey, beneficiary, amount);
-                claim_ixs.push(ix);
-                if w > 0 {
+
+                if amounttoclaim > 0 {
+                    //println!("Adding {} from wallet {} to claim txn... ", amounttoclaim, w);
+                    total_rewards_amount += amounttoclaim;
+                    let ix = instruction::claim(pubkey, beneficiary, amounttoclaim);
+                    claim_ixs.push(ix);
+                }
+                else {
+                    //println!("Wallet {} does not meet requirements, clearing claim amount", w);
+                    //if one wallet doesn't have the amount requested, don't claim anything yet
+                    total_rewards_amount = 0;
+                }
+
+                if beneficiary != self.wallets[w].pubkey() {
                     signerwallets.push(&self.wallets[w]);
                 }
             }
@@ -71,9 +88,9 @@ impl Miner {
 
         let amountf = (total_rewards_amount as f64) / (10f64.powf(TOKEN_DECIMALS as f64));
 
-        if has_ore_rewards {
+        if has_ore_rewards && amountf > 0.0 {
             println!("Submitting claim transaction...");
-            let mut signers = vec![&self.wallets[0]];
+            let mut signers = vec![];
             signers.extend(signerwallets);
 
             match self
@@ -81,11 +98,24 @@ impl Miner {
                 .await
             {
                 Ok(sig) => {
-                    println!("{} Ore Claimed Successfully! to {} : {}", amountf, beneficiary, sig);
+                    println!("{} {} Claimed Successfully! to {} : {}", amountf, TOKEN_NAME, beneficiary, sig);
                 }
                 Err(err) => {
-                    println!("Error: {:?}", err);
+                    if !err.to_string().contains("This transaction has already been processed") {
+                        println!("Error: {:?}", err);
+                    }
+                    else {
+                        println!("{} {} Claimed Successfully! to {}", amountf, TOKEN_NAME, beneficiary);
+                    }
                 }
+            }
+        }
+        else {
+            if !has_ore_rewards {
+                println!("No rewards to claim yet");
+            }
+            else if amount > Some(0.0) {
+                println!("Rewards not sufficient to claim desired amount of {} per wallet", amount.unwrap());
             }
         }
     }

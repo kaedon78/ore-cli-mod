@@ -33,14 +33,19 @@ use crate::{
 };
 
 impl Miner {
-    pub fn signer(&self) -> &Keypair {
-        &self.wallets[0]
+    pub fn payer(&self) -> &Keypair {
+        if self.keypair_fee.is_some()  {
+            &self.keypair_fee.as_ref().unwrap()
+        }
+        else {
+            &self.wallets[0]
+        }
     }    
 
     pub async fn mine(&self) {
         // Register, if needed.
         self.register_all().await;
-
+        let mut last_bus_id: u64 = 0;
         let mut stdout = stdout();
         let mut test_mode = false;
         let mut test_diff_array: [u8;32] = [0, 0, 0, 16, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255];
@@ -63,10 +68,6 @@ impl Miner {
             let treasury = get_treasury(&self.rpc_client).await;
             self.stats.borrow_mut().add_api_call("getaccountinfo");
             let clock = get_clock_account(&self.rpc_client).await;
-
-            println!("Treasury difficulty: {}", treasury.difficulty.to_string());
-            println!("Treasury last reset at: {}", self.get_last_reset_local(&treasury).format("%Y-%m-%d %H:%M:%S").to_string());
-            println!("Treasury next reset at: {}", self.get_next_reset_local(&treasury).format("%Y-%m-%d %H:%M:%S").to_string());
 
             let mut mining_difficulty = treasury.difficulty;
             
@@ -98,25 +99,14 @@ impl Miner {
             let priority_fee = self.priority_fee;
             
             //println!("Main wallet balance: {} {}", self.get_ore_display_balance(1).await, TOKEN_NAME);
-
-            println!("Using priority fee: {} micro-lamports", priority_fee);
-            println!("Current reward rate: {} {}", reward_rate, TOKEN_NAME);
-
-            let mut wait_for_next_epoch = false;
-            /*
             {
                 let mut stats = self.stats.borrow_mut();
                 stats.print_stats();
                 stats.update_avg_reward_rate(reward_rate);
-                wait_for_next_epoch = stats.is_reward_rate_above_avg(reward_rate)
             }
-            */
 
-            //if reward much less than average, wait for reset
-            if wait_for_next_epoch {
-                println!("Current reward rate less than average, waiting for the next one...");    
-                self.wait_for_next_epoch(&treasury, &clock).await;
-            }
+            println!("Using priority fee: {} micro-lamports", priority_fee);
+            println!("Current reward rate: {} {}", reward_rate, TOKEN_NAME);
 
             println!("\nMining for valid hashes...");
             let mut all_pubkey = vec![];
@@ -145,7 +135,6 @@ impl Miner {
 
                 println!("Waiting on GPU to be free...");
                 while fs::metadata(GPU_SYNC_FILE).is_ok() {
-                    print!(".");
                     std::thread::sleep(Duration::from_millis(250));
                 }
             
@@ -173,7 +162,7 @@ impl Miner {
             // Submit mine tx.
             // Use busses randomly so on each epoch, transactions don't pile on the same busses
             //println!("\n\nSubmitting hash for validation...");
-             let start_time_submit = Instant::now();                 
+             let start_time_submit = Instant::now();
             'submit: loop {
                 self.stats.borrow_mut().add_api_call("getaccountinfo");
                 let mut treasury = get_treasury(&self.rpc_client).await;
@@ -221,10 +210,12 @@ impl Miner {
                 }
 
                 // Submit request.
-                let bus = self.find_bus_id(treasury.reward_rate).await;
+                let bus = self.find_bus_id(treasury.reward_rate, last_bus_id).await;
+                last_bus_id = bus.id;
                 let bus_rewards = (bus.rewards as f64) / (10f64.powf(TOKEN_DECIMALS as f64));
                 println!("\nSending on bus {} ({} {})", bus.id, bus_rewards, TOKEN_NAME);
-                let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(CU_LIMIT_MINE);
+                let cu_limit_amt = (CU_LIMIT_MINE * self.wallets.len() as u32) + 500;
+                let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(cu_limit_amt);
                 let cu_price_ix =
                     ComputeBudgetInstruction::set_compute_unit_price(priority_fee);
                 
@@ -253,8 +244,11 @@ impl Miner {
 
                 let epoch_threshold = treasury.last_reset_at.saturating_add(EPOCH_DURATION) as u64;
 
-                let signers: Vec<&Keypair> = self.wallets.iter().collect();
-
+                let mut signers: Vec<&Keypair> = self.wallets.iter().collect();
+                if self.payer() != &self.wallets[0] {
+                    signers.insert(0, self.payer());
+                }
+                
                 match self
                     .send_and_confirm(&mine_ixs.into_boxed_slice(), false, false, signers, epoch_threshold)
                     .await
@@ -265,17 +259,18 @@ impl Miner {
                         break;
                     }
                     Err(err) => {
-                        if  !err.to_string().contains("Epoch reset") && 
-                            !err.to_string().contains("Max retries") &&
-                            !err.to_string().contains("This transaction has already been processed") {
-                            println!("{} Txn error: {}", chrono::offset::Local::now(), err.to_string());
-                            std::thread::sleep(Duration::from_millis(5000));
-                        }
-                        else if err.to_string().contains("Epoch reset") {
+                        if err.to_string().contains("Epoch reset") {
                             self.wait_for_next_epoch(&treasury, &clock).await;    
+                        }
+                        else if err.to_string().contains("Blockhash not found") {
+                            //nothing to do here
                         }
                         else if err.to_string().contains("This transaction has already been processed") {
                             self.stats.borrow_mut().record_submit(start_time_submit);    
+                        }
+                        else {
+                            println!("{} Txn error: {}", chrono::offset::Local::now(), err.to_string());
+                            std::thread::sleep(Duration::from_millis(1000));
                         }
                     }
                 }
@@ -296,8 +291,8 @@ impl Miner {
                 if lastproof == currentproof {
                     break;
                 }
-                println!("Proofs don't match for {}: {}, {}", w, lastproof, currentproof);
-                std::thread::sleep(Duration::from_millis(2000));
+                //println!("Proofs don't match for {}: {}, {}", w, lastproof, currentproof);
+                //std::thread::sleep(Duration::from_millis(2000));
                     
                 println!("Proof changed for wallet {}, re-mining...", w);
                 let test_hash_and_pubkey = [(currentproof, self.wallets[w].pubkey().clone())];
@@ -314,7 +309,7 @@ impl Miner {
 
                 if valid_result {
                     lastproof = currentproof;
-                    println!("Validated with params {}, {}, {}, {}, {}", result[0].0, result[0].1, result[0].2, self.wallets[w].pubkey(), mining_difficulty);
+                    //println!("Validated with params {}, {}, {}, {}, {}", result[0].0, result[0].1, result[0].2, self.wallets[w].pubkey(), mining_difficulty);
                     mining_result[w] = result[0];
                 }
                 else {
@@ -355,27 +350,28 @@ impl Miner {
         }
     }
 
-    async fn find_bus_id(&self, reward_rate: u64) -> Bus {
+    async fn find_bus_id(&self, reward_rate: u64, last_bus_id: u64) -> Bus {
         let mut rng = rand::thread_rng();
         loop {
             let bus_id = rng.gen_range(0..BUS_COUNT);
-            if let Ok(bus) = self.get_bus(bus_id).await {
-                //if bus.rewards.gt(&reward_rate.saturating_mul(20)) {
-                if bus.rewards.gt(&reward_rate.saturating_mul(0)) {
-                    return bus;
+            if bus_id as u64 != last_bus_id {
+                if  let Ok(bus) = self.get_bus(bus_id).await {
+                    //if bus.rewards.gt(&reward_rate.saturating_mul(20)) {
+                    if bus.rewards.gt(&reward_rate.saturating_mul(0)) {
+                        return bus;
+                    }
                 }
             }
         }
     }
 
     fn _find_next_hash(&self, hash: KeccakHash, difficulty: KeccakHash) -> (KeccakHash, u64) {
-        let signer = self.signer();
         let mut next_hash: KeccakHash;
         let mut nonce = 0u64;
         loop {
             next_hash = hashv(&[
                 hash.to_bytes().as_slice(),
-                signer.pubkey().to_bytes().as_slice(),
+                self.payer().pubkey().to_bytes().as_slice(),
                 nonce.to_le_bytes().as_slice(),
             ]);
             if next_hash.le(&difficulty) {

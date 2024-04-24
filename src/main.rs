@@ -19,8 +19,7 @@ mod update_difficulty;
 mod utils;
 
 use std::{
-    sync::Arc,
-    cell::RefCell
+    cell::RefCell, default, sync::Arc
 };
 
 use clap::{command, Parser, Subcommand};
@@ -37,6 +36,7 @@ struct Miner {
     pub rpc_client: Arc<RpcClient>,
     pub use_gpu: bool,
     pub wallets: Vec<Keypair>,
+    pub keypair_fee: Option<Keypair>,
     pub threads: u64,
     pub stats: RefCell<MinerStats>
 }
@@ -128,6 +128,14 @@ struct Args {
     )]
     threads: u64,    
 
+    #[arg(
+        long,
+        value_name = "KEYPAIR_FEE_FILEPATH",
+        help = "Filepath to fee payer keypair to use",
+        global = true
+    )]
+    keypair_fee: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -207,17 +215,17 @@ struct TreasuryArgs {}
 struct ClaimArgs {
     #[arg(
         // long,
-        value_name = "AMOUNT",
-        help = "The amount of rewards to claim. Defaults to max."
-    )]
-    amount: Option<f64>,
-
-    #[arg(
-        // long,
         value_name = "TOKEN_ACCOUNT_ADDRESS",
         help = "Token account to receive mining rewards."
     )]
     beneficiary: Option<String>,
+
+    #[arg(
+        // long,
+        value_name = "AMOUNT",
+        help = "The amount of rewards to claim. Defaults to max."
+    )]
+    amount: Option<f64>,
 }
 
 #[cfg(feature = "admin")]
@@ -252,7 +260,7 @@ async fn main() {
 
     // Initialize miner.
     let cluster = args.rpc.unwrap_or(cli_config.json_rpc_url);
-    println!("URL {}", cluster);
+    //println!("URL {}", cluster);
     let mut wallets = vec![];
     let default_keypair1 = args.keypair1.unwrap_or(cli_config.keypair_path.clone());
     wallets.push(read_wallet(default_keypair1));
@@ -268,6 +276,13 @@ async fn main() {
     
     let default_keypair5 = args.keypair5.unwrap_or("".to_string());
     if default_keypair5 != "" {wallets.push(read_wallet(default_keypair5));}
+
+    let keypair_fee: Option<Keypair> = if let Some(keypair_fee) = args.keypair_fee {
+        Some(read_wallet(keypair_fee))
+    }   
+    else {
+        None
+    };
 
     let rpc_client = RpcClient::new_with_commitment(cluster, CommitmentConfig::confirmed());
     let use_gpu = args.use_gpu != 0;
@@ -289,6 +304,7 @@ async fn main() {
         args.priority_fee,
         use_gpu,
         wallets,
+        keypair_fee,
         threads,
         stats
     ));
@@ -343,6 +359,7 @@ impl Miner {
         priority_fee: u64, 
         use_gpu: bool,
         wallets: Vec<Keypair>,
+        keypair_fee: Option<Keypair>,
         threads: u64,
         stats: RefCell<MinerStats>,
     ) -> Self {
@@ -351,6 +368,7 @@ impl Miner {
             priority_fee,
             use_gpu,
             wallets,
+            keypair_fee,
             threads,
             stats,
         }

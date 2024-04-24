@@ -11,21 +11,19 @@ impl Miner {
     pub async fn create_nonce_transaction(
         &self, 
         instructions: Vec<Instruction>,
-        payer: Option<&Pubkey>,
-        nonce_authority_pubkey: &Pubkey,
         signers: &Vec<&Keypair>,
     ) ->  Transaction {
-        let signer = signers[0];    
+        let payer = self.payer();    
         let client = self.rpc_client.clone();
 
-        let mut nonce_manager = NonceManager::new(self.rpc_client.clone(), signer.pubkey(), 1 as u64);
-        nonce_manager.try_init_all(&signer).await; 
+        let mut nonce_manager = NonceManager::new(self.rpc_client.clone(), payer.pubkey(), 1 as u64);
+        nonce_manager.try_init_all(&payer).await; 
 
         let msg = solana_sdk::message::Message::new_with_nonce( 
             instructions,
-            payer,
+            Some(&payer.pubkey()),
             &nonce_manager.next().pubkey(),
-            nonce_authority_pubkey
+            &payer.pubkey()
         );
         let mut tx = Transaction::new_unsigned(msg.clone());
 
@@ -39,4 +37,24 @@ impl Miner {
 
         tx
     }
+
+    pub async fn create_transaction(
+        &self, 
+        instructions: Vec<Instruction>,
+        signers: &Vec<&Keypair>,
+    ) ->  Transaction {
+        let payer = self.payer();    
+        let client = self.rpc_client.clone();
+
+        self.stats.borrow_mut().add_api_call("getlatestblockhash");
+        let (hash, _slot) = client
+            .get_latest_blockhash_with_commitment(self.rpc_client.commitment())
+            .await
+            .unwrap();
+
+        let mut tx = Transaction::new_with_payer(&instructions.into_boxed_slice(), Some(&payer.pubkey()));
+        tx.sign(signers, hash);
+
+        tx
+    }    
 }

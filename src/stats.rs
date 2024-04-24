@@ -16,8 +16,6 @@ pub struct MinerStats {
 	pub api_calls: Vec<String>,
 }
 
-use crate::constants::TARGET_RATE_MULT;
-
 impl MinerStats {
     pub fn new() -> Self {
         Self {
@@ -36,6 +34,10 @@ impl MinerStats {
         }
     }
 
+	pub fn get_total_time(&self) -> u128 {
+		self.total_submit_mills + self.total_mining_mills
+	}
+
 	pub fn print_stats(&self) {
         if self.total_times_submitted > 0 {
             println!("Avg hash mining time: {} sec", self.total_mining_mills / self.total_times_submitted as u128 / 1000);
@@ -43,7 +45,7 @@ impl MinerStats {
 		if self.total_times_submitted > 0 {
 			println!("Avg reward rate: {} {}", self.reward_rate_total as f64 / self.reward_rate_count as f64, TOKEN_NAME);
 			println!("Total txns: {}", self.total_times_submitted);
-			println!("Avg time per txn: {} seconds", (self.total_submit_mills + self.total_mining_mills) / self.total_times_submitted as u128 / 1000);
+			println!("Avg time per txn: {} seconds", self.get_total_time() / self.total_times_submitted as u128 / 1000);
 		}
 	}
 
@@ -54,10 +56,6 @@ impl MinerStats {
             self.reward_rate_total += reward_rate;
             self.reward_rate_count += 1;
         }	
-	}
-
-	pub fn is_reward_rate_above_avg(&self, reward_rate: f64) -> bool {
-		reward_rate < (self.reward_rate_total as f64 / self.reward_rate_count as f64) * TARGET_RATE_MULT
 	}
 
 	pub fn record_mine(&mut self, start_time_mine:Instant) {
@@ -99,6 +97,10 @@ impl MinerStats {
 		for (value, count) in counts.iter() {
 			println!("RPC call \"{}\": Count {}", value, count);
 		}
-		println!("Total RPC credits - QN:{}: HEL:{}", self.api_calls.len()*50, self.api_calls.len()*10);
+		println!("RPC credits total - QN:{}: HEL:{}", self.api_calls.len()*50, self.api_calls.len()*10);
+		if self.get_total_time() > 0 {
+			let rpc_calls_per_hour: f32 = self.api_calls.len() as f32 / (self.get_total_time() as f32 / 3_600_000.0);
+			println!("RPC credits per hour - QN:{}: HEL:{}", (rpc_calls_per_hour * 50.0), rpc_calls_per_hour * 10.0);
+		}
 	}
 }

@@ -30,7 +30,6 @@ impl Miner {
         epoch_threshold: u64,
     ) -> ClientResult<Signature> {
         let mut stdout = stdout();
-        let signer = signers[0];
         let client = self.rpc_client.clone();
         
         // Return error if balance is zero
@@ -52,11 +51,8 @@ impl Miner {
             min_context_slot: None,
         };
 
-        
-        let tx = self.create_nonce_transaction(
+        let tx = self.create_transaction(
             ixs.to_vec(),
-            Some(&signer.pubkey()),
-            &signer.pubkey(),
             &signers
         ).await;
 
@@ -69,7 +65,7 @@ impl Miner {
                 let d = UNIX_EPOCH + Duration::from_secs(epoch_threshold-5);
                 let n = SystemTime::now();
                 if n > d {
-                    println!("Need to wait for next epoch...");
+                    println!("\nNeed to wait for next epoch...");
                     return Err(ClientError {
                         request: None,
                         kind: ClientErrorKind::Custom("Epoch reset".into()),
@@ -114,6 +110,7 @@ impl Miner {
                             // Handle confirmation errors
                             Err(err) => {
                                 if  !err.to_string().contains("0x1") &&
+                                    !err.to_string().contains("simulation failed") &&
                                     !err.to_string().contains("This transaction has already been processed"){
                                     println!("\nGet sigs error: {:?}", err.to_string());
                                 }
@@ -130,6 +127,7 @@ impl Miner {
                 // Handle submit errors
                 Err(err) => {
                     if  !err.to_string().contains("0x1") &&
+                        !err.to_string().contains("simulation failed") &&
                         !err.to_string().contains("This transaction has already been processed")
                     {
                         println!("\nSend txn error {:?}", err.to_string());

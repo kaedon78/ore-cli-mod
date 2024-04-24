@@ -28,6 +28,12 @@ You may also specify up to 4 additional wallets to mine with which will get bund
 .\target\release\ore --rpc "your_rpc_node_url" --keypair1 "keypair1.json" --keypair2 "keypair2.json" --keypair3 "keypair3.json" --keypair4 "keypair4.json" --keypair5 "keypair5.json" --priority-fee 12345 mine
 ```
 
+Additionally, you may specify a fee-payer keypair to use rather than keypair1, so all miners can utilize the same fee-payer as follows:
+
+```sh
+.\target\release\ore --rpc "your_rpc_node_url" --keypair1 "keypair1.json" --keypair2 "keypair2.json" --keypair3 "keypair3.json" --keypair4 "keypair4.json" --keypair5 "keypair5.json" --priority-fee 12345 mine --keypair-fee "keypairFee.json"
+```
+
 To run the GPU mining version, you will first need to install the CUDA Toolkit from the NVIDIA site here:
 
 https://developer.nvidia.com/cuda-downloads
@@ -44,7 +50,13 @@ Also before running the GPU version, set the following environment variable: (re
 export CUDA_VISIBLE_DEVICES=<GPU_INDEX>
 ```
 
-And lastly, if you want to mine ORZ instead of ORE, you can compile this project using the "orz" feature as follows
+Once the .cu file has been built, run ore with the --use-gpu 1 option as follows to enable GPU mode:
+
+```sh
+.\target\release\ore --rpc "your_rpc_node_url" --keypair1 "keypair1.json" --priority-fee 12345 mine --use-gpu 1
+```
+
+And lastly, if you want to mine ORZ instead of ORE, you can compile this project using the "orz" feature as follows:
 
 ```sh
 cargo build --release --no-default-features --features orz

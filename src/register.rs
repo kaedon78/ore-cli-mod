@@ -11,10 +11,10 @@ use crate::{utils::proof_pubkey, Miner};
 
 impl Miner {
     pub async fn register_all(&self) {
-        for wallet in self.wallets.iter() {
-            self.register(wallet).await
+        for w in 0..self.wallets.len() {
+            println!("Generating challenge for wallet {}...", w);
+            self.register(&self.wallets[w]).await
         }
-        println!("Registration OK...");    
     }
 
     pub async fn register(&self, signer: &Keypair) {
@@ -24,12 +24,11 @@ impl Miner {
         let proof_address = proof_pubkey(pubkey);
         self.stats.borrow_mut().add_api_call("getaccountinfo");
         if client.get_account(&proof_address).await.is_ok() {
-            //println!("Registration OK...");    
+            println!("Registration OK...");    
             return;
         }
 
         // Sign and send transaction.
-        println!("Generating challenge...");
         let ix = instruction::register(pubkey);
         self.send_and_confirm(&[ix], true, false, vec![&signer], 0)
             .await

@@ -5,7 +5,7 @@ use solana_sdk::{
     signature::{Signature,Signer},
     transaction::Transaction,
 };
-use crate::constants::NONCE_RENT;
+use crate::constants::_NONCE_RENT;
 
 pub struct NonceManager {
     pub rpc_client: std::sync::Arc<RpcClient>,
@@ -68,7 +68,7 @@ impl NonceManager {
                     &self.authority,
                     &nonce_pubkey,
                     &self.authority,
-                    NONCE_RENT,
+                    _NONCE_RENT,
             ))
         }
     }

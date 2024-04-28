@@ -2,6 +2,8 @@
 use ore::{self, TOKEN_DECIMALS};
 #[cfg(feature = "orz")]
 use orz::{self, TOKEN_DECIMALS};
+#[cfg(feature = "mars")]
+use mars::{self, TOKEN_DECIMALS};
 
 use solana_sdk::{
     signature::Signer,

@@ -5,10 +5,9 @@ mod constants;
 #[cfg(feature = "admin")]
 mod initialize;
 mod mine;
-mod nonce_manager;
+//mod nonce_manager;
 mod register;
 mod rewards;
-mod send_and_confirm;
 mod stats;
 mod treasury;
 mod transaction;
@@ -19,7 +18,7 @@ mod update_difficulty;
 mod utils;
 
 use std::{
-    cell::RefCell, default, sync::Arc
+    cell::RefCell, sync::Arc, //default,
 };
 
 use clap::{command, Parser, Subcommand};
@@ -197,29 +196,13 @@ struct RewardsArgs {
 }
 
 #[derive(Parser, Debug)]
-struct MineArgs {
-    #[arg(
-        long,
-        short,
-        value_name = "THREAD_COUNT",
-        help = "The number of threads to dedicate to mining",
-        default_value = "0"
-    )]
-    threads: u64,
-}
+struct MineArgs {}
 
 #[derive(Parser, Debug)]
 struct TreasuryArgs {}
 
 #[derive(Parser, Debug)]
 struct ClaimArgs {
-    #[arg(
-        // long,
-        value_name = "TOKEN_ACCOUNT_ADDRESS",
-        help = "Token account to receive mining rewards."
-    )]
-    beneficiary: Option<String>,
-
     #[arg(
         // long,
         value_name = "AMOUNT",
@@ -323,11 +306,11 @@ async fn main() {
         Commands::Treasury(_) => {
             miner.treasury().await;
         }
-        Commands::Mine(args) => {
+        Commands::Mine(_) => {
             miner.mine().await;
         }
         Commands::Claim(args) => {
-            miner.claim_all(args.beneficiary.clone(), args.amount).await;
+            miner.claim_all(args.amount).await;
         }
         #[cfg(feature = "admin")]
         Commands::Initialize(_) => {

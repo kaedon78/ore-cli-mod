@@ -2,6 +2,8 @@
 use ore::{self, instruction, state::Treasury, EPOCH_DURATION, TOKEN_DECIMALS};
 #[cfg(feature = "orz")]
 use orz::{self, instruction, state::Treasury, EPOCH_DURATION, TOKEN_DECIMALS};
+#[cfg(feature = "mars")]
+use mars::{self, instruction, state::Treasury, EPOCH_DURATION, TOKEN_DECIMALS};
 
 use crate::{
     constants::{CU_LIMIT_RESET, TOKEN_NAME},
@@ -51,7 +53,6 @@ impl Miner {
             //wait until epoch ends
             println!("Waiting for Epoch end...");
             std::thread::sleep(duration_until_d2);
-            epoch_valid = false;
         }
 
         loop {
@@ -64,10 +65,9 @@ impl Miner {
             threshold = treasury.last_reset_at.saturating_add(EPOCH_DURATION);
             epoch_valid = clock.unix_timestamp.lt(&threshold);
             if epoch_valid {
-                std::thread::sleep(Duration::from_millis(1000));
                 break;
             }
-            std::thread::sleep(Duration::from_millis(2000));
+            std::thread::sleep(Duration::from_millis(5000));
         }
     }
 
@@ -112,13 +112,13 @@ impl Miner {
         }
     }
 
-    pub fn get_last_reset_local(&self, treasury:&Treasury) -> DateTime::<Local> {
+    pub fn _get_last_reset_local(&self, treasury:&Treasury) -> DateTime::<Local> {
         let d = UNIX_EPOCH + Duration::from_secs(treasury.last_reset_at.try_into().unwrap());
         let datetime = DateTime::<Local>::from(d);
         datetime
     }
 
-    pub fn get_next_reset_local(&self, treasury:&Treasury) -> DateTime::<Local> {
+    pub fn _get_next_reset_local(&self, treasury:&Treasury) -> DateTime::<Local> {
         let threshold = treasury.last_reset_at.saturating_add(EPOCH_DURATION);
         let d = UNIX_EPOCH + Duration::from_secs(threshold.try_into().unwrap());
         let datetime = DateTime::<Local>::from(d);
@@ -129,9 +129,9 @@ impl Miner {
         (treasury.reward_rate as f64) / (10f64.powf(TOKEN_DECIMALS as f64))
     }
 
-    pub fn print_treasury_stats(&self, treasury:&Treasury) {
+    pub fn _print_treasury_stats(&self, treasury:&Treasury) {
         println!("Treasury difficulty: {}", treasury.difficulty.to_string());
-        println!("Treasury last reset at: {}", self.get_last_reset_local(treasury).format("%Y-%m-%d %H:%M:%S").to_string());
-        println!("Treasury next reset at: {}", self.get_next_reset_local(treasury).format("%Y-%m-%d %H:%M:%S").to_string());
+        println!("Treasury last reset at: {}", self._get_last_reset_local(treasury).format("%Y-%m-%d %H:%M:%S").to_string());
+        println!("Treasury next reset at: {}", self._get_next_reset_local(treasury).format("%Y-%m-%d %H:%M:%S").to_string());
     }
 }

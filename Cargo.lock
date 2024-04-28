@@ -2127,6 +2127,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
 
 [[package]]
+name = "mars-program"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "624e83761440949b744cd7c1484a0d2322a735540c8a86dcedd0cc14661efcd2"
+dependencies = [
+ "bs58 0.5.1",
+ "bytemuck",
+ "mpl-token-metadata",
+ "num_enum 0.7.2",
+ "shank",
+ "solana-program",
+ "spl-associated-token-account",
+ "spl-token",
+ "static_assertions",
+ "thiserror",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2470,12 +2488,14 @@ dependencies = [
  "crossbeam",
  "futures",
  "log",
+ "mars-program",
  "num-traits",
  "ore-program",
  "orz-program",
  "rand 0.8.5",
  "sha256",
  "solana-account-decoder",
+ "solana-address-lookup-table-program",
  "solana-cli-config",
  "solana-client",
  "solana-program",
@@ -3518,6 +3538,27 @@ dependencies = [
  "spl-token-metadata-interface",
  "thiserror",
  "zstd",
+]
+
+[[package]]
+name = "solana-address-lookup-table-program"
+version = "1.18.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3602b15a5c70a16cac6008d3556098b7990c5ab72b047a996f5ea4e988871975"
+dependencies = [
+ "bincode",
+ "bytemuck",
+ "log",
+ "num-derive 0.4.2",
+ "num-traits",
+ "rustc_version",
+ "serde",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-program",
+ "solana-program-runtime",
+ "solana-sdk",
+ "thiserror",
 ]
 
 [[package]]

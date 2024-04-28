@@ -2,8 +2,9 @@
 use ore::{self, MINT_ADDRESS, TOKEN_DECIMALS, instruction, state::Proof, utils::AccountDeserialize};
 #[cfg(feature = "orz")]
 use orz::{self, MINT_ADDRESS, TOKEN_DECIMALS, instruction, state::Proof, utils::AccountDeserialize};
+#[cfg(feature = "mars")]
+use mars::{self, MINT_ADDRESS, TOKEN_DECIMALS, instruction, state::Proof, utils::AccountDeserialize};
 
-use std::str::FromStr;
 use solana_program::pubkey::Pubkey;
 use solana_sdk::{
     instruction::Instruction,
@@ -11,18 +12,22 @@ use solana_sdk::{
     signature::Signer,
     signer::keypair::Keypair
 };
-use crate::{constants::{CU_LIMIT_CLAIM, TOKEN_NAME}, utils::proof_pubkey, utils::get_proof, Miner};
+use crate::{constants::{CU_LIMIT_CLAIM, TOKEN_NAME}, utils::proof_pubkey, Miner};
 
 impl Miner {
-    pub async fn claim_all(&self, beneficiary: Option<String>, amount: Option<f64>) {
-        
+    pub async fn claim_all(&self, amount: Option<f64>) {
         let client = self.rpc_client.clone();
-        let beneficiary = match beneficiary {
-            Some(beneficiary) => {
-                Pubkey::from_str(&beneficiary).expect("Failed to parse beneficiary address")
-            }
-            None => self.initialize_ata(&self.wallets[0]).await,
-        };
+        let mut signerwallets = vec![];
+        
+        let beneficiary: Pubkey;
+        if self.keypair_fee.is_some() {
+            beneficiary = self.initialize_ata(self.keypair_fee.as_ref().unwrap()).await;
+            signerwallets.push(self.keypair_fee.as_ref().unwrap());
+        }
+        else {
+            beneficiary = self.initialize_ata(&self.wallets[0]).await;
+            signerwallets.push(&self.wallets[0]);
+        }        
 
         let cu_limit_amt = 1_000 + (CU_LIMIT_CLAIM * self.wallets.len() as u32);
         let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(cu_limit_amt);
@@ -33,7 +38,6 @@ impl Miner {
         
         let mut has_ore_rewards = false;
         let mut total_rewards_amount = 0;
-        let mut signerwallets = vec![];
 
         for w in 0..self.wallets.len() {
             let pubkey = self.wallets[w].pubkey();
@@ -98,14 +102,14 @@ impl Miner {
                 .await
             {
                 Ok(sig) => {
-                    println!("{} {} Claimed Successfully! to {} : {}", amountf, TOKEN_NAME, beneficiary, sig);
+                    println!("\n{} {} Claimed Successfully! to {} : {}", amountf, TOKEN_NAME, beneficiary, sig);
                 }
                 Err(err) => {
                     if !err.to_string().contains("This transaction has already been processed") {
-                        println!("Error: {:?}", err);
+                        println!("\nError: {:?}", err);
                     }
                     else {
-                        println!("{} {} Claimed Successfully! to {}", amountf, TOKEN_NAME, beneficiary);
+                        println!("\n{} {} Claimed Successfully! to {}", amountf, TOKEN_NAME, beneficiary);
                     }
                 }
             }

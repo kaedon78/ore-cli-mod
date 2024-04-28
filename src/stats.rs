@@ -2,7 +2,7 @@ use std::{
     time::Instant,
 	collections::HashMap,
 };
-use crate::constants::TOKEN_NAME;
+use crate::constants::{GATEWAY_DELAY, TOKEN_NAME, TARGET_TXN_SEC};
 
 pub struct MinerStats {
 	pub reward_rate_total: f64,
@@ -14,6 +14,7 @@ pub struct MinerStats {
 	pub total_mining_mills: u128,
 	pub last_mine_time: u128,
 	pub api_calls: Vec<String>,
+	pub gateway_delay_adj: u64
 }
 
 impl MinerStats {
@@ -31,6 +32,7 @@ impl MinerStats {
 			total_mining_mills: 0,
 			last_mine_time: 0,
 			api_calls: vec![],
+			gateway_delay_adj: GATEWAY_DELAY,
         }
     }
 
@@ -69,7 +71,7 @@ impl MinerStats {
 		self.total_times_submitted += 1;
 	}
 
-	pub fn reset_stats(&mut self) {
+	pub fn _reset_stats(&mut self) {
 		self.reward_rate_total = 0.0;
 		self.reward_rate_count = 0;
 		self.last_reward_rate = 0.0;
@@ -79,6 +81,7 @@ impl MinerStats {
 		self.total_mining_mills = 0;
 		self.last_mine_time = 0;
 		self.api_calls = vec![];
+		self.gateway_delay_adj = GATEWAY_DELAY;
 	}
 
 	pub fn add_api_call(&mut self, method: &str) {
@@ -102,5 +105,16 @@ impl MinerStats {
 			let rpc_calls_per_hour: f32 = self.api_calls.len() as f32 / (self.get_total_time() as f32 / 3_600_000.0);
 			println!("RPC credits per hour - QN:{}: HEL:{}", (rpc_calls_per_hour * 50.0), rpc_calls_per_hour * 10.0);
 		}
+	}
+
+	pub fn get_adj_gateway_delay(&mut self) -> u64 {
+		let avg_txn_sec:f64 = self.get_total_time() as f64 / self.total_times_submitted as f64 / 1000.0;
+		if avg_txn_sec >= TARGET_TXN_SEC as f64 + 1.0 && self.gateway_delay_adj >= GATEWAY_DELAY - 50 {
+			self.gateway_delay_adj -= 10;
+		}
+		else if avg_txn_sec < TARGET_TXN_SEC as f64 && self.gateway_delay_adj <= GATEWAY_DELAY * 2 {
+			self.gateway_delay_adj += 10;
+		}
+		self.gateway_delay_adj
 	}
 }

@@ -2,6 +2,8 @@
 use ore::{self, MINT_ADDRESS};
 #[cfg(feature = "orz")]
 use orz::{self, MINT_ADDRESS};
+#[cfg(feature = "mars")]
+use mars::{self, MINT_ADDRESS};
 
 use solana_sdk::{
     signature::Signer,

@@ -14,6 +14,7 @@ default = ["ore"]
 admin = []
 ore = ["dep:ore"]
 orz = ["dep:orz"]
+mars = ["dep:mars"]
 
 [dependencies]
 bincode = "1.3.3"
@@ -28,9 +29,11 @@ log = "0.4"
 num-traits = "0.2"
 ore = { version = "1.2.1", package = "ore-program", optional = true }
 orz = { version = "1.2.0", package = "orz-program", optional = true }
+mars = { version = "1.0.0", package = "mars-program", optional = true }
 rand = "0.8.4"
 sha256 = "1.5.0"
 solana-account-decoder = "^1.16"
+solana-address-lookup-table-program = "^1.16"
 solana-cli-config = "1.18.5"
 solana-client = "^1.16"
 solana-program = "^1.16"

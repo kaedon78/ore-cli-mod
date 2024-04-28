@@ -2,6 +2,8 @@
 use ore::{self, ID, state::{Proof, Treasury}, utils::AccountDeserialize, MINT_ADDRESS, PROOF, TREASURY_ADDRESS};
 #[cfg(feature = "orz")]
 use orz::{self, ID, state::{Proof, Treasury}, utils::AccountDeserialize, MINT_ADDRESS, PROOF, TREASURY_ADDRESS};
+#[cfg(feature = "mars")]
+use mars::{self, ID, state::{Proof, Treasury}, utils::AccountDeserialize, MINT_ADDRESS, PROOF, TREASURY_ADDRESS};
 
 use cached::proc_macro::cached;
 use solana_client::nonblocking::rpc_client::RpcClient;

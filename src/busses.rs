@@ -2,6 +2,8 @@
 use ore::{state::Bus, utils::AccountDeserialize, BUS_ADDRESSES, TOKEN_DECIMALS};
 #[cfg(feature = "orz")]
 use orz::{state::Bus, utils::AccountDeserialize, BUS_ADDRESSES, TOKEN_DECIMALS};
+#[cfg(feature = "mars")]
+use mars::{state::Bus, utils::AccountDeserialize, BUS_ADDRESSES, TOKEN_DECIMALS};
 
 use solana_client::client_error::Result;
 use crate::{constants::TOKEN_NAME, Miner};

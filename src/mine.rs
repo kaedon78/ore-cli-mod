@@ -2,6 +2,8 @@
 use ore::{self, instruction, state::Bus, TOKEN_DECIMALS, MINT_ADDRESS, BUS_ADDRESSES, BUS_COUNT, EPOCH_DURATION};
 #[cfg(feature = "orz")]
 use orz::{self, instruction, state::Bus, TOKEN_DECIMALS, MINT_ADDRESS, BUS_ADDRESSES, BUS_COUNT, EPOCH_DURATION};
+#[cfg(feature = "mars")]
+use mars::{self, instruction, state::Bus, TOKEN_DECIMALS, MINT_ADDRESS, BUS_ADDRESSES, BUS_COUNT, EPOCH_DURATION};
 
 use crossbeam::{
     thread,
@@ -58,16 +60,16 @@ impl Miner {
             {
                 let stats = self.stats.borrow_mut();
                 if stats.last_submit_time > 0 {
-                    println!("Last reward took {} seconds to land\n", stats.last_submit_time/1000);
+                    println!("Last reward took {}s to land using GATEWAY_DELAY of {}ms\n", stats.last_submit_time/1000, stats.gateway_delay_adj);
                 }
                 stats.print_api_calls();
             }            
 
             // Fetch account state
             self.stats.borrow_mut().add_api_call("getaccountinfo");
-            let treasury = get_treasury(&self.rpc_client).await;
+            let mut treasury = get_treasury(&self.rpc_client).await;
             self.stats.borrow_mut().add_api_call("getaccountinfo");
-            let clock = get_clock_account(&self.rpc_client).await;
+            let mut clock:solana_program::clock::Clock;
 
             let mut mining_difficulty = treasury.difficulty;
             
@@ -98,7 +100,7 @@ impl Miner {
             let reward_rate = self.get_reward_rate(&treasury);
             let priority_fee = self.priority_fee;
             
-            //println!("Main wallet balance: {} {}", self.get_ore_display_balance(1).await, TOKEN_NAME);
+            //println!("Main wallet balance: {} {}", self.get_ore_display_balance(&self.wallets[0].pubkey()).await, TOKEN_NAME);
             {
                 let mut stats = self.stats.borrow_mut();
                 stats.print_stats();
@@ -164,11 +166,6 @@ impl Miner {
             //println!("\n\nSubmitting hash for validation...");
              let start_time_submit = Instant::now();
             'submit: loop {
-                self.stats.borrow_mut().add_api_call("getaccountinfo");
-                let mut treasury = get_treasury(&self.rpc_client).await;
-                self.stats.borrow_mut().add_api_call("getaccountinfo");
-                let mut clock = get_clock_account(&self.rpc_client).await;
-
                 //println!("Validating Hashes...");
                 // Double check we're submitting for the right challenge
                 for w in 0..self.wallets.len() {
@@ -196,17 +193,19 @@ impl Miner {
 
                 // Reset epoch, if needed
                 loop {
+                    self.stats.borrow_mut().add_api_call("getaccountinfo");
+                    treasury = get_treasury(&self.rpc_client).await;
+                    self.stats.borrow_mut().add_api_call("getaccountinfo");
+                    clock = get_clock_account(&self.rpc_client).await;
+   
                     //println!("Checking Epoch Reset...");
                     let epoch_valid = self.check_epoch_reset(&treasury, &clock).await;
                     if epoch_valid {
                         break;
                     }
-                    self.stats.borrow_mut().add_api_call("getaccountinfo");
-                    treasury = get_treasury(&self.rpc_client).await;
-                    self.stats.borrow_mut().add_api_call("getaccountinfo");
-                    clock = get_clock_account(&self.rpc_client).await;
-
-                    std::thread::sleep(Duration::from_millis(1000));
+                    else {
+                        self.wait_for_next_epoch(&treasury, &clock).await;
+                    }
                 }
 
                 // Submit request.
@@ -260,7 +259,7 @@ impl Miner {
                     }
                     Err(err) => {
                         if err.to_string().contains("Epoch reset") {
-                            self.wait_for_next_epoch(&treasury, &clock).await;    
+                            //self.wait_for_next_epoch(&treasury, &clock).await;    
                         }
                         else if err.to_string().contains("Blockhash not found") {
                             //nothing to do here
@@ -355,7 +354,7 @@ impl Miner {
         loop {
             let bus_id = rng.gen_range(0..BUS_COUNT);
             if bus_id as u64 != last_bus_id {
-                if  let Ok(bus) = self.get_bus(bus_id).await {
+                if let Ok(bus) = self.get_bus(bus_id).await {
                     //if bus.rewards.gt(&reward_rate.saturating_mul(20)) {
                     if bus.rewards.gt(&reward_rate.saturating_mul(0)) {
                         return bus;
@@ -443,7 +442,7 @@ impl Miner {
         &self,
         difficulty: &KeccakHash,
         hash_and_pubkey: &[(KeccakHash, Pubkey)],
-        threads: u64
+        _threads: u64
     ) -> Vec<(KeccakHash, u64, KeccakHash)> {
         let mut child = tokio::process::Command::new(env::current_exe().unwrap().parent().unwrap().join("gpu-worker"))
         .stdin(std::process::Stdio::piped())
@@ -522,11 +521,11 @@ impl Miner {
         true
     }
 
-    pub async fn _get_ore_display_balance(&self, signer_number: u64) -> String {
+    pub async fn _get_ore_display_balance(&self, address:&Pubkey) -> String {
         let client = self.rpc_client.clone();
         
         let token_account_address = spl_associated_token_account::get_associated_token_address(
-            &self.wallets[0].pubkey(),
+            address,
             &MINT_ADDRESS,
         );
         

@@ -56,7 +56,7 @@ Once the .cu file has been built, run ore with the --use-gpu 1 option as follows
 .\target\release\ore --rpc "your_rpc_node_url" --keypair1 "keypair1.json" --priority-fee 12345 mine --use-gpu 1
 ```
 
-And lastly, if you want to mine ORZ instead of ORE, you can compile this project using the "orz" feature as follows:
+And lastly, if you want to mine ORZ or MARS instead of ORE, you can compile this project using the "orz" or "mars" feature as follows:
 
 ```sh
 cargo build --release --no-default-features --features orz
